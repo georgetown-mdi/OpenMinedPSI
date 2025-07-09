@@ -9,7 +9,8 @@ export type Server = {
     fpr: number,
     numClientInputs: number,
     inputs: readonly string[],
-    dataStructure?: psi.DataStructure
+    dataStructure?: psi.DataStructure,
+    sortingPermutation?: number[]
   ) => ServerSetup
   readonly processRequest: (clientRequest: Request) => Response
   readonly getPrivateKeyBytes: () => Uint8Array
@@ -76,22 +77,39 @@ const ServerConstructor = (
       fpr: number,
       numClientInputs: number,
       inputs: readonly string[],
-      dataStructure: psi.DataStructure = DataStructure.GCS
+      dataStructure: psi.DataStructure = DataStructure.GCS,
+      sortingPermutation: number[] | undefined = undefined
     ): ServerSetup {
       if (!_instance) {
         throw new Error(ERROR_INSTANCE_DELETED)
       }
-      const { Value, Status } = _instance.CreateSetupMessage(
-        fpr,
-        numClientInputs,
-        inputs,
-        dataStructure
-      )
-      if (Status) {
-        throw new Error(Status.Message)
-      }
+      if (sortingPermutation === undefined) {
+        const { Value, Status } = _instance.CreateSetupMessage(
+          fpr,
+          numClientInputs,
+          inputs,
+          dataStructure
+        )
+        if (Status) {
+          throw new Error(Status.Message)
+        }
 
-      return ServerSetup.deserializeBinary(Value)
+        return ServerSetup.deserializeBinary(Value)
+      } else {
+        const { Value, Status, Permutation } = _instance.CreateSetupMessage(
+          fpr,
+          numClientInputs,
+          inputs,
+          dataStructure,
+          true
+        )
+        if (Status) {
+          throw new Error(Status.Message)
+        }
+        sortingPermutation.push(...Permutation!);
+        
+        return ServerSetup.deserializeBinary(Value);
+      }
     },
 
     /**

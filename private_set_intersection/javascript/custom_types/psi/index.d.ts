@@ -10,7 +10,8 @@ declare module 'psi_*' {
   }
 
   type CreateSetupMessageResult = Result & {
-    readonly Value: string
+    readonly Value: string,
+    readonly Permutation?: number[]
   }
   type CreateRequestResult = Result & {
     readonly Value: string
@@ -20,6 +21,9 @@ declare module 'psi_*' {
   }
   type GetIntersectionResult = Result & {
     readonly Value: number[]
+  }
+  type GetAssociationTableResult = Result & {
+    readonly Value: number[][]
   }
   type GetIntersectionSizeResult = Result & {
     readonly Value: number
@@ -37,7 +41,8 @@ declare module 'psi_*' {
       fpr: number,
       numClientInputs: number,
       inputs: readonly string[],
-      dataStructure: DataStructure
+      dataStructure: DataStructure,
+      includeSortingPermutation?: boolean
     ) => CreateSetupMessageResult
     readonly ProcessRequest: (clientRequest: Uint8Array) => ProcessRequestResult
     readonly GetPrivateKeyBytes: () => Uint8Array
@@ -52,6 +57,10 @@ declare module 'psi_*' {
       serverSetup: Uint8Array,
       serverResponse: Uint8Array
     ) => GetIntersectionResult
+    readonly GetAssociationTable: (
+      serverSetup: Uint8Array,
+      serverResponse: Uint8Array
+    ) => GetAssociationTableResult
     readonly GetIntersectionSize: (
       serverSetup: Uint8Array,
       serverResponse: Uint8Array

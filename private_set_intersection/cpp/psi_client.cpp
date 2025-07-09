@@ -141,6 +141,28 @@ StatusOr<std::vector<int64_t>> PsiClient::GetIntersection(
 }
 
 /**
+ * @brief Compute the mapping between client and server rows
+ *
+ * @param server_setup The original server's setup
+ * @param server_response The previous server's response
+ *
+ * @return StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+ */
+StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+PsiClient::GetAssociationTable(
+    const psi_proto::ServerSetup& server_setup,
+    const psi_proto::Response& server_response) const {
+  if (!reveal_intersection) {
+    return absl::InvalidArgumentError(
+        "GetAssociationTable called on PsiClient with reveal_intersection == "
+        "false");
+  }
+  ASSIGN_OR_RETURN(auto associative_table,
+                   ProcessResponseForAssociationTable(server_setup, server_response));
+  return associative_table;
+}
+
+/**
  * @brief Compute the intersection (cardinality)
  *
  * @param server_setup The original server's setup
@@ -190,7 +212,7 @@ StatusOr<std::vector<int64_t>> PsiClient::ProcessResponse(
 
   switch (server_setup.data_structure_case()) {
     case psi_proto::ServerSetup::DataStructureCase::kRaw: {
-      // Decode Bloom Filter from the server setup.
+      // Decode raw from the server setup.
       ASSIGN_OR_RETURN(auto container, Raw::CreateFromProtobuf(server_setup));
       return container->Intersect(absl::MakeConstSpan(decrypted));
     }
@@ -205,6 +227,56 @@ StatusOr<std::vector<int64_t>> PsiClient::ProcessResponse(
                        BloomFilter::CreateFromProtobuf(server_setup));
       return container->Intersect(absl::MakeConstSpan(decrypted));
     }
+    default: {
+      return absl::InvalidArgumentError("Impossible");
+    }
+  }
+}
+
+/**
+ * @brief Process the server's response to obtain the associative table
+ *        mapping client and server data.
+ *
+ * @param server_setup The original server's setup
+ * @param server_response The previous server's response
+ *
+ * @return StatusOr<std::vector<int64_t>>
+ */
+StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+PsiClient::ProcessResponseForAssociationTable(
+    const psi_proto::ServerSetup& server_setup,
+    const psi_proto::Response& server_response) const {
+  // Ensure both items are valid
+  if (!server_setup.IsInitialized()) {
+    return absl::InvalidArgumentError("`server_setup` is corrupt!");
+  }
+
+  if (!server_response.IsInitialized()) {
+    return absl::InvalidArgumentError("`server_response` is corrupt!");
+  }
+
+  const auto& response_array = server_response.encrypted_elements();
+  const std::int64_t response_size =
+      static_cast<std::int64_t>(response_array.size());
+  std::vector<std::string> decrypted;
+  decrypted.reserve(response_size);
+
+  for (int64_t i = 0; i < response_size; i++) {
+    ASSIGN_OR_RETURN(std::string element,
+                     ec_cipher_->Decrypt(response_array[i]));
+    decrypted.push_back(element);
+  }
+
+  switch (server_setup.data_structure_case()) {
+    case psi_proto::ServerSetup::DataStructureCase::kRaw: {
+      // Decode raw from the server setup.
+      ASSIGN_OR_RETURN(auto container, Raw::CreateFromProtobuf(server_setup));
+      return container->GetAssociationTable(decrypted);
+    }
+    case psi_proto::ServerSetup::DataStructureCase::kGcs:
+    return absl::InvalidArgumentError("associative table can only be computed for Raw data structure");
+    case psi_proto::ServerSetup::DataStructureCase::kBloomFilter:
+    return absl::InvalidArgumentError("associative table can only be computed for Raw data structure");
     default: {
       return absl::InvalidArgumentError("Impossible");
     }

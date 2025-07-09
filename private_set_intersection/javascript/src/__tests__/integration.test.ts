@@ -1,3 +1,4 @@
+import { executionAsyncId } from 'async_hooks'
 import { PSILibrary } from '../implementation/psi'
 import PSI from '../wasm_node'
 
@@ -37,7 +38,43 @@ describe('PSI Integration', () => {
     const client = psi.client!.createFromKey(clientKey, false)
     expect(client.getPrivateKeyBytes()).toEqual(clientKey)
   })
+  test('should compute association table', async () => {
+    const client = psi.client!.createWithNewKey(true)
+    const server = psi.server!.createWithNewKey(true)
 
+    const serverStates = ["HI", "VT", "AZ", "SC", "HI", "AL", "MD", "MS", "AZ", "FL", "CT", "WA"];
+    const clientStates = ["OH", "NH", "AZ", "IL", "OK", "AZ", "VT"];
+
+    var sortingPermutation: number[] = [];
+
+    const serverSetup = server
+        .createSetupMessage(0, -1, serverStates, psi.dataStructure.Raw, sortingPermutation);
+    const clientRequest = client.createRequest(clientStates).serializeBinary()
+    const serverResponse = server
+        .processRequest(psi.request.deserializeBinary(clientRequest))
+        .serializeBinary();
+    var associationTable = client.getAssociationTable(
+          psi.serverSetup.deserializeBinary(serverSetup.serializeBinary()),
+          psi.response.deserializeBinary(serverResponse)
+        );
+    associationTable[1] = associationTable[1].map((value) => { return sortingPermutation[value];});
+    const expectedAssociationPairs = [
+      [2, 2], [2, 8], [5, 2], [5, 8], [6, 1]
+    ];
+    expect(associationTable[0].length).toEqual(associationTable[1].length);
+
+    var associationPairs = [...Array(associationTable[0].length)].map((_, i) => { return [associationTable[0][i], associationTable[1][i]];});
+    associationPairs.sort((a, b) => {
+      if (a[0] < b[0]) return -1;
+      if (a[0] == b[0]) {
+        if (a[1] < b[1]) return -1;
+        if (a[1] == b[1]) return 0;
+        return 1;
+      }
+      return 1;
+    });
+    expect(associationPairs).toEqual(expectedAssociationPairs);
+  })
   test('should compute the intersection', async () => {
     ;[
       { revealIntersection: true, dataStructure: psi.dataStructure.Raw },

@@ -17,7 +17,11 @@
 #ifndef PRIVATE_SET_INTERSECTION_CPP_RAW_H_
 #define PRIVATE_SET_INTERSECTION_CPP_RAW_H_
 
-#include <vector>
+#include <cstddef> // std::size_t
+#include <memory>  // unique_ptr
+#include <utility> // std::pair
+#include <string>  // std::string
+#include <vector>  // std::vector
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -34,7 +38,9 @@ class Raw {
   Raw() = delete;
 
   static StatusOr<std::unique_ptr<Raw>> Create(
-      int64_t num_client_inputs, std::vector<std::string> elements);
+    std::vector<std::string> elements,
+    std::vector<std::size_t>* sorting_permutation = nullptr
+  );
 
   // Creates a container containing holding encrypted values from a protocol
   // buffer
@@ -44,8 +50,12 @@ class Raw {
   // Calculates the intersection
   std::vector<int64_t> Intersect(absl::Span<const std::string> elements) const;
 
+  // Calculates associative table mapping encrypted to decrypted
+  std::pair<std::vector<std::size_t>, std::vector<std::size_t>>
+  GetAssociationTable(std::vector<std::string>& decrypted) const;
+
   // Returns the size of the encrypted elements
-  size_t size() const;
+  std::size_t size() const;
 
   // Returns a protobuf representation of the container
   psi_proto::ServerSetup ToProtobuf() const;

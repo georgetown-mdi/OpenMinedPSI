@@ -97,6 +97,54 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
             return ToJSObject(result);
           }))
       .function(
+          "GetAssociationTable",
+          optional_override([](const PsiClient& self,
+                               const emscripten::val& server_setup_array,
+                               const emscripten::val& server_response_array) {
+            const std::size_t server_setup_length =
+                server_setup_array["length"].as<std::size_t>();
+            std::string server_setup_string(server_setup_length, '\0');
+            for (std::size_t i = 0; i < server_setup_length; i++) {
+              server_setup_string[i] = server_setup_array[i].as<std::uint8_t>();
+            }
+
+            const std::size_t server_response_length =
+                server_response_array["length"].as<std::size_t>();
+            std::string server_response_string(server_response_length, '\0');
+            for (std::size_t i = 0; i < server_response_length; i++) {
+              server_response_string[i] =
+                  server_response_array[i].as<std::uint8_t>();
+            }
+
+            psi_proto::ServerSetup server_setup;
+            server_setup.ParseFromString(server_setup_string);
+            psi_proto::Response server_response;
+            server_response.ParseFromString(server_response_string);
+
+            // We need to convert to a JS array explicitly because JS
+            // doesn't know about vector<int64_t>.
+            StatusOr<emscripten::val> result;
+            const auto status =
+                self.GetAssociationTable(server_setup, server_response);
+            if (status.ok()) {
+              // Convert int64_t to int32_t for JS
+              const std::pair<std::vector<std::size_t>, std::vector<std::size_t>> unsupported_result = *status;
+              std::vector<std::int32_t> first_result(unsupported_result.first.begin(), unsupported_result.first.end());
+              std::vector<std::int32_t> second_result(unsupported_result.second.begin(), unsupported_result.second.end());
+              
+              // Convert vector to JS array
+              std::vector<emscripten::val> supported_result(2);
+              supported_result[0] = emscripten::val::array(first_result.begin(), first_result.end());
+              supported_result[1] = emscripten::val::array(second_result.begin(), second_result.end());
+              emscripten::val array = emscripten::val::array(supported_result.begin(), supported_result.end());
+
+              result = StatusOr<emscripten::val>(array);
+            } else {
+              result = status.status();
+            }
+            return ToJSObject(result);
+          }))
+      .function(
           "GetIntersectionSize",
           optional_override([](const PsiClient& self,
                                const emscripten::val& server_setup_array,

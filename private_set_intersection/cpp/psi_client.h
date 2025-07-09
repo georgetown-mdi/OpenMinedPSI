@@ -140,6 +140,16 @@ class PsiClient {
       const psi_proto::ServerSetup& server_setup,
       const psi_proto::Response& server_response) const;
 
+  // As `GetIntersection`, but calculates the full mapping between client
+  // and server elements.
+  // 
+  // Returns INVALID_ARGUMENT if any input messages are malformed, or INTERNAL
+  // if decryption fails.
+StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+GetAssociationTable(
+      const psi_proto::ServerSetup& server_setup,
+      const psi_proto::Response& server_response) const;
+
   // As `GetIntersection`, but only reveals the size of the intersection. Use
   // this function if this instance was created with `reveal_intersection =
   // false`.
@@ -164,6 +174,10 @@ class PsiClient {
   // the bloom filter encoded by `server_setup`. This method is called by
   // GetIntersection and GetIntersectionSize internally.
   StatusOr<std::vector<int64_t>> ProcessResponse(
+      const psi_proto::ServerSetup& server_setup,
+      const psi_proto::Response& server_response) const;
+  StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+  ProcessResponseForAssociationTable(
       const psi_proto::ServerSetup& server_setup,
       const psi_proto::Response& server_response) const;
 

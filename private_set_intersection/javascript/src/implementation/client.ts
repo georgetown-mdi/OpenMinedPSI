@@ -10,6 +10,10 @@ export type Client = {
     serverSetup: ServerSetup,
     serverResponse: Response
   ) => number[]
+  readonly getAssociationTable: (
+    serverSetup: ServerSetup,
+    serverResponse: Response
+  ) => number[][]
   readonly getIntersectionSize: (
     serverSetup: ServerSetup,
     serverResponse: Response
@@ -96,6 +100,35 @@ const ClientConstructor = (instance: psi.Client): Client => {
       }
 
       const { Value, Status } = _instance.GetIntersection(
+        setup.serializeBinary(),
+        response.serializeBinary()
+      )
+      if (Status) {
+        throw new Error(Status.Message)
+      }
+      return Value
+    },
+
+    /**
+     * Processes the server's response and returns the mapping between client
+     * data points and server data poitns. The first
+     * argument, `setup`, is a bloom filter that encodes encrypted server
+     * elements and is sent by the server in a setup phase. The second argument,
+     * `response`, is the response received from the server after sending
+     * the result of `createRequest`.
+     *
+     * @function
+     * @name Client#getAssociationTable
+     * @param {ServerSetup} setup The ServerServer protobuf
+     * @param {Response} response The Response protobuf
+     * @returns {Number[]} The PSI intersection
+     */
+    getAssociationTable(setup: ServerSetup, response: Response): number[][] {
+      if (!_instance) {
+        throw new Error(ERROR_INSTANCE_DELETED)
+      }
+
+      const { Value, Status } = _instance.GetAssociationTable(
         setup.serializeBinary(),
         response.serializeBinary()
       )

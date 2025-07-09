@@ -27,10 +27,9 @@ namespace {
 
 class RawTest : public ::testing::Test {
  protected:
-  void SetUp(int64_t num_client_inputs,
-             std::vector<std::string> encrypted_elements) {
+  void SetUp(std::vector<std::string> encrypted_elements) {
     PSI_ASSERT_OK_AND_ASSIGN(
-        container_, Raw::Create(num_client_inputs, encrypted_elements));
+        container_, Raw::Create(encrypted_elements));
   }
 
   std::unique_ptr<Raw> container_;
@@ -40,7 +39,7 @@ TEST_F(RawTest, TestIntersection) {
   std::vector<std::string> server = {"a", "b", "c", "d", "e"};
   std::vector<std::string> client = {"b", "c", "d", "z"};
 
-  SetUp(static_cast<int64_t>(client.size()), server);
+  SetUp(server);
   std::vector<int64_t> results = container_->Intersect(absl::MakeSpan(client));
   std::vector<int64_t> expected{0, 1, 2};
   EXPECT_EQ(results.size(), 3);
@@ -51,7 +50,7 @@ TEST_F(RawTest, TestIntersectionLargerClient) {
   std::vector<std::string> server = {"b", "c", "d", "z"};
   std::vector<std::string> client = {"a", "b", "c", "d", "e"};
 
-  SetUp(static_cast<int64_t>(client.size()), server);
+  SetUp(server);
   std::vector<int64_t> results = container_->Intersect(absl::MakeSpan(client));
   std::vector<int64_t> expected{1, 2, 3};
   EXPECT_EQ(results.size(), 3);
@@ -62,7 +61,7 @@ TEST_F(RawTest, TestToProtobuf) {
   std::vector<std::string> server = {"b", "a", "c", "d", "e"};
   std::vector<std::string> client = {"b", "c", "d", "z"};
 
-  SetUp(static_cast<int64_t>(client.size()), server);
+  SetUp(server);
 
   // Create the protobuf from the Raw container and check if it matches.
   psi_proto::ServerSetup encoded_filter = container_->ToProtobuf();
@@ -78,7 +77,7 @@ TEST_F(RawTest, TestIntersectionFromProtobuf) {
   std::vector<std::string> server = {"a", "b", "c", "d", "e"};
   std::vector<std::string> client = {"b", "c", "d", "z"};
 
-  SetUp(static_cast<int64_t>(client.size()), server);
+  SetUp(server);
 
   // Create the protobuf from the Raw container and check if it matches.
   PSI_ASSERT_OK_AND_ASSIGN(auto container2,

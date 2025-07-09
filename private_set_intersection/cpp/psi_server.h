@@ -17,6 +17,10 @@
 #ifndef PRIVATE_SET_INTERSECTION_CPP_PSI_SERVER_H_
 #define PRIVATE_SET_INTERSECTION_CPP_PSI_SERVER_H_
 
+#include <cstddef> // std::size_t
+#include <memory>  // std::unique_ptr
+#include <vector>  // std::vector
+
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "private_join_and_compute/crypto/ec_commutative_cipher.h"
@@ -83,7 +87,8 @@ class PsiServer {
   StatusOr<psi_proto::ServerSetup> CreateSetupMessage(
       double fpr, int64_t num_client_inputs,
       absl::Span<const std::string> inputs,
-      DataStructure ds = DataStructure::Gcs) const;
+      DataStructure ds = DataStructure::Gcs,
+    std::vector<std::size_t>* sorting_permutation = nullptr) const;
 
   // Processes a client query and returns the corresponding server response to
   // be sent to the client. For each encrytped element `H(x)^c` in the decoded

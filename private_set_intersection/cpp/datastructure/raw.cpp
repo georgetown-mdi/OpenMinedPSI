@@ -16,7 +16,12 @@
 
 #include "private_set_intersection/cpp/datastructure/raw.h"
 
+#include <iostream>
+
+#include <algorithm> // std::sort, maybe std::swap
+#include <numeric> // std::iota
 #include <cmath>
+#include <utility> // maybe std::swap
 
 #include "absl/memory/memory.h"
 #include "absl/strings/escaping.h"
@@ -50,13 +55,48 @@ void custom_set_intersection(InputIt1 first1, InputIt1 last1, InputIt2 first2,
 
 Raw::Raw(std::vector<std::string> elements) : encrypted_(std::move(elements)) {}
 
-StatusOr<std::unique_ptr<Raw>> Raw::Create(int64_t num_client_inputs,
-                                           std::vector<std::string> elements) {
-  // We sort to make intersections easier to find later
-  std::sort(elements.begin(), elements.end());
+// Create is called by the server when constructing its startup message.
+// That is, the encrypted version of the server's own data.
+StatusOr<std::unique_ptr<Raw>> Raw::Create(
+  std::vector<std::string> elements,
+  std::vector<std::size_t>* sorting_permutation_ptr
+)
+{
+  std::unique_ptr<std::vector<std::size_t>> local_sorting_permutation(nullptr);
+  if (sorting_permutation_ptr == nullptr) {
+    local_sorting_permutation = std::unique_ptr<std::vector<std::size_t>>(new std::vector<std::size_t>(elements.size()));
+    sorting_permutation_ptr = local_sorting_permutation.get();
+  } 
+  std::vector<std::size_t>& sorting_permutation(*sorting_permutation_ptr);
+  
+  std::iota(sorting_permutation.begin(), sorting_permutation.end(), 0);
 
+  std::sort(
+    sorting_permutation.begin(), sorting_permutation.end(),
+    [&elements](size_t i1, size_t i2) {return elements[i1] < elements[i2];}
+  );
+
+  std::vector<bool> index_visited(elements.size(), false);
+
+  for (std::size_t i = 0; i < elements.size(); ++i) {
+    if (index_visited[i]) continue;
+
+    std::size_t j = sorting_permutation[i];
+    std::string value = elements[j];
+    while (j != i) {
+      elements[j] = elements[sorting_permutation[j]];
+      index_visited[j] = true;
+      j = sorting_permutation[j];
+    }
+    elements[i] = value;
+  }
+  
   return absl::WrapUnique(new Raw(elements));
 }
+
+// CreateFromProtobuf is called by the client when processing the server's
+// setup message. It contains the encrypted version of the server's own data.
+// These are sorted when the server Raw::Create()s.
 
 StatusOr<std::unique_ptr<Raw>> Raw::CreateFromProtobuf(
     const psi_proto::ServerSetup& encoded_filter) {
@@ -71,6 +111,73 @@ StatusOr<std::unique_ptr<Raw>> Raw::CreateFromProtobuf(
   return absl::WrapUnique(new Raw(encrypted_elements));
 }
 
+std::pair<std::vector<size_t>, std::vector<size_t>>
+Raw::GetAssociationTable(
+  std::vector<std::string>& decrypted) const
+{
+  // decrypted are the server's response, that is the client's own data after
+  // the server has encrypted it. They are not yet sorted.
+  std::vector<std::size_t> permutation(decrypted.size());
+
+  std::iota(permutation.begin(), permutation.end(), 0);
+
+  std::sort(
+    permutation.begin(), permutation.end(),
+    [&decrypted](size_t i1, size_t i2) {return decrypted[i1] < decrypted[i2];}
+  );
+
+  std::vector<bool> index_visited(decrypted.size(), false);
+
+  for (std::size_t i = 0; i < decrypted.size(); ++i) {
+    if (index_visited[i]) continue;
+
+    std::size_t j = permutation[i];
+    std::string value = decrypted[j];
+    while (j != i) {
+      decrypted[j] = decrypted[permutation[j]];
+      index_visited[j] = true;
+      j = permutation[j];
+    }
+    decrypted[i] = value;
+  }
+
+  std::vector<size_t> decrypted_permutation, encrypted_permutation;
+
+  size_t i = 0, j = 0;
+
+  while (i < decrypted.size() && j < encrypted_.size()) {
+    // advance decrypted until it is no longer behind encrypted_
+    while (i < decrypted.size() && decrypted[i] < encrypted_[j]) ++i;
+    if (i >= decrypted.size()) break;
+
+    // assert decrypted[i] >= encrypted_[j]
+    size_t first_j = j;
+    std::string first_encrypted = encrypted_[j];
+    if (decrypted[i] == encrypted_[j]) while (true) {
+      // account for the possibility that multiple decrypted[i] equal
+      // multiple encrypted
+      do {
+        decrypted_permutation.push_back(permutation[i]);
+        encrypted_permutation.push_back(j);
+        ++j;
+      } while (j < encrypted_.size() && decrypted[i] == encrypted_[j]);
+
+      ++i;
+      if (i < decrypted.size() && decrypted[i] == first_encrypted) {
+        // reset j so we can run it again
+        j = first_j;
+      } else {
+        break;
+      }
+    }
+    // i and j should now have advanced past the point where ecnrypted and
+    // decrypted were equal. We advance encrypted until it is past decrypted
+    while (j < encrypted_.size() && decrypted[i] > encrypted_[j]) ++j;
+  }
+
+  return make_pair(decrypted_permutation, encrypted_permutation);
+}
+
 std::vector<int64_t> Raw::Intersect(
     absl::Span<const std::string> elements) const {
   // This implementation creates a copy of `elements`, but the tradeoff is that
@@ -80,7 +187,7 @@ std::vector<int64_t> Raw::Intersect(
 
   // Collect a pair with the index to track the original index after sorting.
   for (size_t i = 0; i < elements.size(); ++i) {
-    vp[i] = make_pair(elements[i], (int64_t)i);
+    vp[i] = std::make_pair(elements[i], (int64_t)i);
   }
 
   // Next, we sort the collection. O(nlog(n))
