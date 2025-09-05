@@ -111,8 +111,8 @@ const ClientConstructor = (instance: psi.Client): Client => {
 
     /**
      * Processes the server's response and returns the mapping between client
-     * data points and server data poitns. The first
-     * argument, `setup`, is a bloom filter that encodes encrypted server
+     * data points and server data points. The first
+     * argument, `setup`, is a raw data structure that encodes encrypted server
      * elements and is sent by the server in a setup phase. The second argument,
      * `response`, is the response received from the server after sending
      * the result of `createRequest`.
