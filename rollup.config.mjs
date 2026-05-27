@@ -3,7 +3,6 @@ import commonjs from '@rollup/plugin-commonjs'
 import resolve from '@rollup/plugin-node-resolve'
 import replace from '@rollup/plugin-replace'
 import terser from '@rollup/plugin-terser'
-import builtins from 'rollup-plugin-node-builtins'
 import typescript from 'rollup-plugin-typescript2'
 
 const outputs = [
@@ -71,9 +70,8 @@ const outputs = [
     plugins: [
       // Order of plugins matters!
       // Depending on the format, we need to correctly transform the build for brower or nodejs
-      resolve({ preferBuiltins: true }), // needed to include the external google-protobuf module in the bundle
+      resolve({ browser: true }), // needed to include the external google-protobuf module in the bundle
       commonjs(), // needed to convert commonjs to es6 for protobuf
-      builtins({ fs: true }),
       alias({
         entries: [
           // Used to replace the paths that use `import * psi from './psi_*'` statement to point to their respective JS files
@@ -111,9 +109,8 @@ const outputs = [
     plugins: [
       // Order of plugins matters!
       // Depending on the format, we need to correctly transform the build for brower or nodejs
-      resolve({ preferBuiltins: true }), // needed to include the external google-protobuf module in the bundle
+      resolve({ browser: true }), // needed to include the external google-protobuf module in the bundle
       commonjs(), // needed to convert commonjs to es6 for protobuf
-      builtins({ fs: true }),
       alias({
         entries: [
           // Used to replace the paths that use `import * psi from './psi_*'` statement to point to their respective JS files

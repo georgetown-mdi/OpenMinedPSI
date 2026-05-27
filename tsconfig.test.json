@@ -1,12 +1,11 @@
 {
   "compilerOptions": {
-    "baseUrl": "./private_set_intersection/javascript",
     "declaration": true,
     "declarationDir": "./private_set_intersection/javascript/tsc-out/types",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "newLine": "LF",
     "noEmitOnError": true,
     "noFallthroughCasesInSwitch": true,
@@ -14,9 +13,6 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "outDir": "./private_set_intersection/javascript/tsc-out",
-    "paths": {
-      "psi_*": ["./private_set_intersection/javascript/bin/psi_*"]
-    },
     "pretty": true,
     "removeComments": true,
     "resolveJsonModule": true,
@@ -27,7 +23,8 @@
     "typeRoots": [
       "./private_set_intersection/javascript/custom_types",
       "./node_modules/@types"
-    ]
+    ],
+    "types": ["jest", "node", "psi"]
   },
   "include": ["./private_set_intersection/javascript/src/**/*"],
   "exclude": ["node_modules", "**/tsc-out"]

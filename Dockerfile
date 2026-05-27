@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM ubuntu:25.04 AS bazel
+FROM ubuntu:26.04 AS bazel
 
 WORKDIR /root
 
@@ -18,13 +18,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       unzip \
     && rm -rf /var/lib/apt/lists/*
 
-ENV BAZEL_VERSION=8.4.0
+ENV BAZEL_VERSION=8.7.0
 RUN curl -L -O https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-dist.zip \
     && unzip bazel-${BAZEL_VERSION}-dist.zip -d bazel-src \
     && cd bazel-src \
     && env EXTRA_BAZEL_ARGS="--tool_java_runtime_version=local_jdk" bash ./compile.sh
 
-FROM ubuntu:25.04 AS psi-build
+FROM ubuntu:26.04 AS psi-build
 
 WORKDIR /root
 
@@ -42,3 +42,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       npm \
       openjdk-21-jdk \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+

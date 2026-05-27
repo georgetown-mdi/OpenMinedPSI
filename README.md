@@ -143,3 +143,22 @@ See [CONTRIBUTORS.md](CONTRIBUTORS.md).
 ## License
 
 [Apache License 2.0](https://choosealicense.com/licenses/apache-2.0/)
+
+# Fork info
+
+Contains a Docker file with the build environment and some modifications to the
+C++/JavaScript build that allow more ways to work with the raw datastructure.
+
+```sh
+docker build -t openminedpsi-build .
+docker run -it --rm --mount type=bind,source=${PWD},target=/work openminedpsi-build /bin/bash
+
+npm install
+npm run clean
+npm run build
+npm run build:proto
+npm run compile
+npm run test
+npm run coverage
+npm run rollup
+```
