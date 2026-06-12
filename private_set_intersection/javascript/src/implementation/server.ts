@@ -106,8 +106,15 @@ const ServerConstructor = (
         if (Status) {
           throw new Error(Status.Message)
         }
-        sortingPermutation.push(...Permutation!);
-        
+        if (Permutation === undefined) {
+          throw new Error('sorting permutation is only available with DataStructure.Raw')
+        }
+        const perm = Permutation!;
+        const base = sortingPermutation.length;          // 0 in practice
+        sortingPermutation.length = base + perm.length;  // single allocation
+        for (let i = 0; i < perm.length; ++i)
+          sortingPermutation[base + i] = perm[i];
+
         return ServerSetup.deserializeBinary(Value);
       }
     },
