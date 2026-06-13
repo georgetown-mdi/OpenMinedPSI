@@ -42,7 +42,16 @@ emscripten::val ToSerializedJSObject(absl::StatusOr<T> statusor) {
     const size_t size = protobuf.ByteSizeLong();
     std::vector<std::uint8_t> byte_vector(size);
     protobuf.SerializeToArray(byte_vector.data(), size);
-    emscripten::val byte_array = emscripten::val::array(byte_vector);
+    // Return the serialized protobuf as a Uint8Array rather than a plain JS
+    // array. emscripten::val::array boxes every byte as a JS number, so a
+    // multi-MB ServerSetup became a multi-million-element array that
+    // deserializeBinary then re-copied into a Uint8Array. typed_memory_view is
+    // a single contiguous view over the WASM heap; wrapping it in `new
+    // Uint8Array(view)` copies it into a JS-owned buffer (required -- the view
+    // is invalidated when byte_vector is destroyed and on any heap growth), and
+    // protobuf-js consumes that buffer directly with no further copy.
+    emscripten::val byte_array = emscripten::val::global("Uint8Array").new_(
+        emscripten::typed_memory_view(size, byte_vector.data()));
     result.set("Value", byte_array);
     result.set("Status", emscripten::val::null());
   } else {
