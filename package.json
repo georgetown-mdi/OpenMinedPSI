@@ -1,6 +1,6 @@
 {
   "name": "@openmined/psi.js",
-  "version": "2.0.6-seclink.1",
+  "version": "2.0.6-seclink.2",
   "description": "Private Set Intersection for JavaScript",
   "repository": {
     "type": "git",
@@ -76,6 +76,7 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.13.4",
     "google-protobuf": "^4.0.2",
+    "node-gyp-build": "^4.8.4",
     "protoc-gen-js": "^3.21.4-4",
     "protoc-gen-ts": "^0.8.7",
     "ts-protoc-gen": "^0.15.0"

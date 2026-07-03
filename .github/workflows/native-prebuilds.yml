@@ -1,0 +1,140 @@
+# Builds the native N-API PSI addon (private_set_intersection/napi) as a
+# prebuilt .node for every supported platform, then packs a single
+# @openmined/psi.js tarball carrying all of them plus the WASM engine. Consumers
+# resolve the right prebuild at load time with node-gyp-build; no end-user
+# compiler is needed.
+#
+# Manual: run from the Actions tab (workflow_dispatch). The `package` job's
+# tarball artifact is what gets vendored downstream (e.g. psilink's lib/).
+#
+# Node-API is ABI-stable, so one .node per (OS, arch) serves every supported
+# Node -- the addon is built against the runner's Node and loads on any Node
+# with the same N-API version.
+
+name: Native prebuilds
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    # git-bash on Windows, so the build steps are one script across platforms.
+    shell: bash
+
+jobs:
+  build-addon:
+    name: addon (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { os: macos-14, target: darwin-arm64 }
+          - { os: macos-13, target: darwin-x64 }
+          # Windows is the required-but-finicky target: the .node link must
+          # resolve the N-API symbols against Node's import library (node.lib).
+          # This job wires that up but is the one cell not yet verified on a
+          # real runner -- expect to iterate here.
+          - { os: windows-latest, target: win32-x64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: napi-${{ matrix.target }}
+          repository-cache: true
+
+      - name: Fetch Node import library (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # node.lib resolves the napi_* imports the addon links against.
+          npx --yes node-gyp install
+          node_lib=$(find "$LOCALAPPDATA/node-gyp/Cache" -iname node.lib 2>/dev/null | grep -i 'x64/node.lib' | head -1)
+          if [ -z "$node_lib" ]; then
+            echo "::error::could not locate node.lib for the N-API link"
+            exit 1
+          fi
+          echo "NODE_LIB=$node_lib" >> "$GITHUB_ENV"
+          echo "resolved node.lib: $node_lib"
+
+      - name: Build addon
+        run: |
+          # No `eval`: the --linkopt value is passed as a single quoted argument,
+          # so a Windows path with spaces or shell metacharacters is inert.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # MSVC does not allow undefined symbols; link Node's import library.
+            bazel build -c opt --config=napi "--linkopt=$NODE_LIB" \
+              //private_set_intersection/napi:addon
+          else
+            bazel build -c opt --strip=always --config=napi \
+              //private_set_intersection/napi:addon
+          fi
+
+      - name: Liveness check (loads + runs a real setup)
+        run: |
+          node -e "
+            const addon = require('./bazel-bin/private_set_intersection/napi/psi_native.node');
+            const s = addon.PsiServer.CreateWithNewKey(true);
+            if (s.Status) throw new Error(s.Status.Message);
+            const r = s.Value.CreateSetupMessage(0, -1, ['a', 'b', 'c'], addon.DataStructure.Raw, false);
+            if (r.Status) throw new Error(r.Status.Message);
+            console.log('addon OK on ${{ matrix.target }}; setup bytes:', r.Value.length);
+            s.Value.delete();
+          "
+
+      - name: Stage prebuild
+        run: |
+          mkdir -p "staging/${{ matrix.target }}"
+          cp bazel-bin/private_set_intersection/napi/psi_native.node \
+            "staging/${{ matrix.target }}/node.napi.node"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.target }}
+          path: staging/
+          if-no-files-found: error
+
+  package:
+    name: gather + pack tarball
+    needs: build-addon
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: napi-package
+          repository-cache: true
+
+      - name: Install JS toolchain (rollup + plugins)
+        run: npm ci
+
+      - name: Gather prebuilds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: prebuild-*
+          path: prebuilds-dist
+          merge-multiple: true
+
+      - name: Assemble + pack (WASM + native prebuilds)
+        run: |
+          bash private_set_intersection/javascript/scripts/assemble-native-package.sh \
+            "$GITHUB_WORKSPACE/prebuilds-dist"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openmined-psi-tarball
+          path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
+          if-no-files-found: error

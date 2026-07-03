@@ -17,6 +17,8 @@
 #ifndef PRIVATE_SET_INTERSECTION_CPP_PSI_CLIENT_H_
 #define PRIVATE_SET_INTERSECTION_CPP_PSI_CLIENT_H_
 
+#include <cstdint>
+
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "private_join_and_compute/crypto/ec_commutative_cipher.h"
@@ -121,8 +123,10 @@ class PsiClient {
   // ec_cipher_.
   //
   // Returns INTERNAL if encryption fails.
+  // `progress`, when non-null, receives the running count of encrypted elements
+  // (a UI hint; see progress.h). It never affects the returned request.
   StatusOr<psi_proto::Request> CreateRequest(
-      absl::Span<const std::string> inputs) const;
+      absl::Span<const std::string> inputs, int32_t* progress = nullptr) const;
 
   // Processes the server's response and returns the intersection of the client
   // and server inputs. Use this function if this instance was created with
@@ -138,7 +142,8 @@ class PsiClient {
   // if decryption fails.
   StatusOr<std::vector<int64_t>> GetIntersection(
       const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response) const;
+      const psi_proto::Response& server_response,
+      int32_t* progress = nullptr) const;
 
   // As `GetIntersection`, but calculates the full mapping between client
   // and server elements.
@@ -148,7 +153,8 @@ class PsiClient {
 StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
 GetAssociationTable(
       const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response) const;
+      const psi_proto::Response& server_response,
+      int32_t* progress = nullptr) const;
 
   // As `GetIntersection`, but only reveals the size of the intersection. Use
   // this function if this instance was created with `reveal_intersection =
@@ -158,7 +164,8 @@ GetAssociationTable(
   // if decryption fails.
   StatusOr<int64_t> GetIntersectionSize(
       const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response) const;
+      const psi_proto::Response& server_response,
+      int32_t* progress = nullptr) const;
 
   // Returns this instance's private key. This key should only be used to create
   // other client instances. DO NOT SEND THIS KEY TO ANY OTHER PARTY!
@@ -175,11 +182,13 @@ GetAssociationTable(
   // GetIntersection and GetIntersectionSize internally.
   StatusOr<std::vector<int64_t>> ProcessResponse(
       const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response) const;
+      const psi_proto::Response& server_response,
+      int32_t* progress = nullptr) const;
   StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
   ProcessResponseForAssociationTable(
       const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response) const;
+      const psi_proto::Response& server_response,
+      int32_t* progress = nullptr) const;
 
   std::unique_ptr<::private_join_and_compute::ECCommutativeCipher> ec_cipher_;
   bool reveal_intersection;

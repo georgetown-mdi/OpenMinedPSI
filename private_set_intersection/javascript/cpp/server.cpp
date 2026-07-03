@@ -7,6 +7,7 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
   using absl::StatusOr;
   using emscripten::optional_override;
   using private_set_intersection::DataStructure;
+  using private_set_intersection::ProgressPointer;
   using private_set_intersection::PsiServer;
   using private_set_intersection::ToJSObject;
   using private_set_intersection::ToSerializedJSObject;
@@ -38,7 +39,8 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
                                      const std::size_t num_client_inputs,
                                      const emscripten::val &byte_array,
                                      const DataStructure ds,
-                                     const bool include_sorting_permutation
+                                     const bool include_sorting_permutation,
+                                     const emscripten::val &progress_ptr
                                     ) {
                   std::vector<std::string> string_vector;
                   const std::size_t l = byte_array["length"].as<std::size_t>();
@@ -54,7 +56,8 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
                     sorting_permutation = std::unique_ptr<std::vector<std::size_t>>(new std::vector<std::size_t>(l));
                   }
                   const auto status = self.CreateSetupMessage(
-                      fpr, num_client_inputs, string_vector, ds, sorting_permutation.get());
+                      fpr, num_client_inputs, string_vector, ds,
+                      sorting_permutation.get(), ProgressPointer(progress_ptr));
                   if (status.ok()) {
                     server_setup = *status;
                   } else {
@@ -70,7 +73,8 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
                 }))
       .function("ProcessRequest",
                 optional_override([](const PsiServer &self,
-                                     const emscripten::val &byte_array) {
+                                     const emscripten::val &byte_array,
+                                     const emscripten::val &progress_ptr) {
                   const std::size_t l = byte_array["length"].as<std::size_t>();
                   std::string byte_string(l, '\0');
 
@@ -82,7 +86,9 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
                   client_request.ParseFromString(byte_string);
 
                   StatusOr<psi_proto::Response> response;
-                  const auto status = self.ProcessRequest(client_request);
+                  const auto status =
+                      self.ProcessRequest(client_request,
+                                          ProgressPointer(progress_ptr));
                   if (status.ok()) {
                     response = *status;
                   } else {

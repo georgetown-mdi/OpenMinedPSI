@@ -46,6 +46,14 @@ cc_library(
     hdrs = [":package_h"],
 )
 
+# Header-only best-effort progress counter written into caller-owned memory by
+# the per-element EC loops (native addon: a JS SharedArrayBuffer slot; WASM: a
+# linear-memory word). Never affects the ciphertext or wire format.
+cc_library(
+    name = "progress",
+    hdrs = ["progress.h"],
+)
+
 cc_test(
     name = "package_test",
     srcs = ["package_test.cpp"],
@@ -55,12 +63,33 @@ cc_test(
     ],
 )
 
+# Parallel per-element EC transforms used by the native (non-WASM) builds. The
+# threaded code is compiled only when PSI_ENABLE_THREADS is defined (the native
+# prebuild build passes --copt=-DPSI_ENABLE_THREADS); under emscripten the
+# translation unit is empty and psi_server/psi_client use their inline
+# single-threaded loops.
+cc_library(
+    name = "parallel_ec",
+    srcs = ["parallel_ec.cpp"],
+    hdrs = ["parallel_ec.h"],
+    deps = [
+        ":progress",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/types:span",
+        "@boringssl//:crypto",
+        "@private_join_and_compute//private_join_and_compute/crypto:ec_commutative_cipher",
+    ],
+)
+
 cc_library(
     name = "psi_client",
     srcs = ["psi_client.cpp"],
     hdrs = ["psi_client.h"],
     includes = ["."],
     deps = [
+        ":parallel_ec",
+        ":progress",
         "//private_set_intersection/cpp/datastructure",
         "//private_set_intersection/cpp/datastructure:bloom_filter",
         "//private_set_intersection/cpp/datastructure:gcs",
@@ -98,6 +127,8 @@ cc_library(
     ],
     includes = ["."],
     deps = [
+        ":parallel_ec",
+        ":progress",
         "//private_set_intersection/cpp/datastructure",
         "//private_set_intersection/cpp/datastructure:bloom_filter",
         "//private_set_intersection/cpp/datastructure:gcs",

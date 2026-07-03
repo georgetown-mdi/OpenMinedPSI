@@ -18,6 +18,7 @@
 #define PRIVATE_SET_INTERSECTION_CPP_PSI_SERVER_H_
 
 #include <cstddef> // std::size_t
+#include <cstdint> // int32_t
 #include <memory>  // std::unique_ptr
 #include <vector>  // std::vector
 
@@ -84,11 +85,15 @@ class PsiServer {
   // you must have correctness.
   //
   // Returns INTERNAL if encryption fails.
+  // `progress`, when non-null, is a caller-owned int32 slot into which the
+  // running count of encrypted elements is published (a UI hint; see
+  // progress.h). It never affects the returned message.
   StatusOr<psi_proto::ServerSetup> CreateSetupMessage(
       double fpr, int64_t num_client_inputs,
       absl::Span<const std::string> inputs,
       DataStructure ds = DataStructure::Gcs,
-    std::vector<std::size_t>* sorting_permutation = nullptr) const;
+    std::vector<std::size_t>* sorting_permutation = nullptr,
+    int32_t* progress = nullptr) const;
 
   // Processes a client query and returns the corresponding server response to
   // be sent to the client. For each encrytped element `H(x)^c` in the decoded
@@ -102,8 +107,11 @@ class PsiServer {
   //
   // Returns INVALID_ARGUMENT if the request is malformed or if
   // reveal_intersection != client_request["reveal_intersection"].
+  // `progress`, when non-null, receives the running count of re-encrypted
+  // elements (a UI hint; see progress.h).
   StatusOr<psi_proto::Response> ProcessRequest(
-      const psi_proto::Request& client_request) const;
+      const psi_proto::Request& client_request,
+      int32_t* progress = nullptr) const;
 
   // Returns this instance's private key. This key should only be used to create
   // other server instances. DO NOT SEND THIS KEY TO ANY OTHER PARTY!
