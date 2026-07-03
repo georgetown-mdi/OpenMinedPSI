@@ -31,6 +31,7 @@
 #include <utility>
 
 #include "absl/status/statusor.h"
+#include "openssl/mem.h"
 #include "openssl/obj_mac.h"
 #include "private_set_intersection/cpp/progress.h"
 
@@ -94,7 +95,15 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
 
   // Contiguous shards. Distinct index ranges write to distinct vector elements,
   // so there is no data race on `outputs` (it is pre-sized, never reallocated).
-  const std::string key = primary->GetPrivateKeyBytes();
+  std::string key = primary->GetPrivateKeyBytes();
+  // Zero this extra copy of the private key when the parallel section exits
+  // (every return path below is covered, after the threads are joined). The
+  // copies inside the primary and per-shard ECCommutativeCipher objects are the
+  // baseline residency and unchanged.
+  struct KeyWiper {
+    std::string& key;
+    ~KeyWiper() { OPENSSL_cleanse(key.data(), key.size()); }
+  } key_wiper{key};
   std::vector<std::pair<std::size_t, std::size_t>> ranges(num_threads);
   const std::size_t base = n / num_threads;
   const std::size_t remainder = n % num_threads;
@@ -108,38 +117,57 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
   std::vector<absl::Status> shard_status(num_threads, absl::OkStatus());
 
   const auto run_shard = [&](std::size_t t) {
-    ECCommutativeCipher* cipher = primary;
-    std::unique_ptr<ECCommutativeCipher> owned;
-    if (t != 0) {
-      // Shards other than 0 must not touch `primary`'s scratch context.
-      absl::StatusOr<std::unique_ptr<ECCommutativeCipher>> clone =
-          CloneCipher(key);
-      if (!clone.ok()) {
-        shard_status[t] = clone.status();
-        return;
+    // Convert any exception (e.g. std::bad_alloc constructing a result string)
+    // into a shard error: escaping a worker thread it would std::terminate, and
+    // escaping the calling thread it would unwind past the join below.
+    try {
+      ECCommutativeCipher* cipher = primary;
+      std::unique_ptr<ECCommutativeCipher> owned;
+      if (t != 0) {
+        // Shards other than 0 must not touch `primary`'s scratch context.
+        absl::StatusOr<std::unique_ptr<ECCommutativeCipher>> clone =
+            CloneCipher(key);
+        if (!clone.ok()) {
+          shard_status[t] = clone.status();
+          return;
+        }
+        owned = *std::move(clone);
+        cipher = owned.get();
       }
-      owned = *std::move(clone);
-      cipher = owned.get();
-    }
-    // Each shard batches its own contribution into the shared progress slot.
-    ProgressCounter counter(progress);
-    for (std::size_t i = ranges[t].first; i < ranges[t].second; ++i) {
-      absl::StatusOr<std::string> encrypted = op(cipher, inputs[i]);
-      if (!encrypted.ok()) {
-        shard_status[t] = encrypted.status();
-        return;
+      // Each shard batches its own contribution into the shared progress slot.
+      ProgressCounter counter(progress);
+      for (std::size_t i = ranges[t].first; i < ranges[t].second; ++i) {
+        absl::StatusOr<std::string> encrypted = op(cipher, inputs[i]);
+        if (!encrypted.ok()) {
+          shard_status[t] = encrypted.status();
+          return;
+        }
+        (*outputs)[i] = *std::move(encrypted);
+        counter.Increment();
       }
-      (*outputs)[i] = *std::move(encrypted);
-      counter.Increment();
+    } catch (...) {
+      shard_status[t] =
+          absl::ResourceExhaustedError("elliptic-curve shard failed");
     }
   };
 
   std::vector<std::thread> threads;
   threads.reserve(num_threads - 1);
-  for (std::size_t t = 1; t < num_threads; ++t) {
-    threads.emplace_back(run_shard, t);
+  std::size_t next_shard = 1;
+  try {
+    for (; next_shard < num_threads; ++next_shard) {
+      threads.emplace_back(run_shard, next_shard);
+    }
+  } catch (...) {
+    // std::thread construction can fail (e.g. EAGAIN under thread pressure). Run
+    // the shards that could not be spawned on the calling thread below, rather
+    // than letting the already-spawned joinable threads reach std::terminate as
+    // the vector unwinds. The result is identical, just less parallel.
   }
   run_shard(0);  // the calling thread owns shard 0
+  for (std::size_t t = next_shard; t < num_threads; ++t) {
+    run_shard(t);  // any shards that were not spawned above
+  }
   for (std::thread& thread : threads) thread.join();
 
   for (const absl::Status& status : shard_status) {

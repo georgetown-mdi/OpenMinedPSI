@@ -21,5 +21,6 @@ const loadNativeLibrary = (): psi.Library =>
 
 // Matches the emscripten module factory shape `() => Promise<psi.Library>`
 // consumed by createLoader; the native addon needs no async instantiation.
-export default (): Promise<psi.Library> =>
-  Promise.resolve(loadNativeLibrary())
+// `async` so node-gyp-build's synchronous "no prebuild" throw surfaces as a
+// rejected Promise rather than escaping the factory synchronously.
+export default async (): Promise<psi.Library> => loadNativeLibrary()

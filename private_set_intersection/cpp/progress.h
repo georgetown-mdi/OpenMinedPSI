@@ -56,6 +56,12 @@ class ProgressCounter {
  public:
   explicit ProgressCounter(int32_t* slot) : slot_(slot) {}
 
+  // Non-copyable: a copy would share the slot and both destructors would Flush
+  // the buffered count, double-publishing it. (The user-declared destructor
+  // already suppresses the implicit move.)
+  ProgressCounter(const ProgressCounter&) = delete;
+  ProgressCounter& operator=(const ProgressCounter&) = delete;
+
   // Publishes any buffered count. Call once when the loop finishes.
   ~ProgressCounter() { Flush(); }
 
