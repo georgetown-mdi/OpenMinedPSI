@@ -3,6 +3,13 @@ declare module 'psi_*' {
     readonly Message: string
   }
 
+  // Optional progress slot the engine writes its running processed-element count
+  // into, so a caller can poll "n so far" against the known input size. The
+  // native addon takes an Int32Array (typically SharedArrayBuffer-backed and
+  // read from another thread); the WASM build takes a numeric byte offset into
+  // its linear memory. Purely a UI hint -- never affects the returned value.
+  type ProgressSlot = Int32Array | number
+
   type Result = {
     readonly Status?: Status
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,28 +49,36 @@ declare module 'psi_*' {
       numClientInputs: number,
       inputs: readonly string[],
       dataStructure: DataStructure,
-      includeSortingPermutation?: boolean
+      includeSortingPermutation?: boolean,
+      progress?: ProgressSlot
     ) => CreateSetupMessageResult
-    readonly ProcessRequest: (clientRequest: Uint8Array) => ProcessRequestResult
+    readonly ProcessRequest: (
+      clientRequest: Uint8Array,
+      progress?: ProgressSlot
+    ) => ProcessRequestResult
     readonly GetPrivateKeyBytes: () => Uint8Array
   }
 
   export type Client = {
     readonly delete: () => void
     readonly CreateRequest: (
-      clientInputs: readonly string[]
+      clientInputs: readonly string[],
+      progress?: ProgressSlot
     ) => CreateRequestResult
     readonly GetIntersection: (
       serverSetup: Uint8Array,
-      serverResponse: Uint8Array
+      serverResponse: Uint8Array,
+      progress?: ProgressSlot
     ) => GetIntersectionResult
     readonly GetAssociationTable: (
       serverSetup: Uint8Array,
-      serverResponse: Uint8Array
+      serverResponse: Uint8Array,
+      progress?: ProgressSlot
     ) => GetAssociationTableResult
     readonly GetIntersectionSize: (
       serverSetup: Uint8Array,
-      serverResponse: Uint8Array
+      serverResponse: Uint8Array,
+      progress?: ProgressSlot
     ) => GetIntersectionSizeResult
     readonly GetPrivateKeyBytes: () => Uint8Array
   }

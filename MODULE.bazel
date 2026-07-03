@@ -74,6 +74,47 @@ http_archive(
     url = "https://github.com/s0l0ist/private-join-and-compute/archive/e81563e0e3caa0f6178e8668be8a4434d2cef352.zip",
 )
 
+## Node-API headers for the native (N-API) addon in
+## private_set_intersection/napi. These are the header-only Node-API interface
+## (node-api-headers) and the C++ wrapper (node-addon-api), pulled straight from
+## their npm tarballs. NAPI_VERSION is pinned so the built addon is ABI-stable
+## across Node releases (built against one Node, loadable on any Node >= that
+## N-API version).
+http_archive(
+    name = "node_api_headers",
+    build_file_content = """
+cc_library(
+    name = "node_api_headers",
+    hdrs = glob(["include/*.h"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+""",
+    sha256 = "6cbfac49542194ae2c8f1dee5fa2dc00d66bec9cbf3b59e3a4e5f16d14eb0d19",
+    strip_prefix = "package",
+    url = "https://registry.npmjs.org/node-api-headers/-/node-api-headers-1.9.0.tgz",
+)
+
+http_archive(
+    name = "node_addon_api",
+    build_file_content = """
+cc_library(
+    name = "node_addon_api",
+    hdrs = glob(["*.h"]),
+    defines = [
+        "NAPI_VERSION=8",
+        "NODE_ADDON_API_DISABLE_DEPRECATED",
+    ],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = ["@node_api_headers//:node_api_headers"],
+)
+""",
+    sha256 = "19b87e2ce3a77fec0121ac97d7db088aae28aacfff481adab50d5f61b70e68f4",
+    strip_prefix = "package",
+    url = "https://registry.npmjs.org/node-addon-api/-/node-addon-api-8.9.0.tgz",
+)
+
 ## Python
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 python.toolchain(

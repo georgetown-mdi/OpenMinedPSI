@@ -4,3 +4,10 @@ build --cxxopt="-std=c++17" --copt="-w" --experimental_isolated_extension_usages
 
 build:wasm --incompatible_enable_cc_toolchain_resolution
 build:wasm --platforms=@emsdk//:platform_wasm
+
+# Native N-API addon (private_set_intersection/napi). Enables the threaded
+# per-element EC paths in parallel_ec.cpp / psi_server.cpp / psi_client.cpp.
+# The WASM build never uses this config, so it stays single-threaded and
+# byte-identical. Build the prebuilt addon with:
+#   bazel build -c opt --config=napi //private_set_intersection/napi:addon
+build:napi --copt=-DPSI_ENABLE_THREADS

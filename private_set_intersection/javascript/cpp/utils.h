@@ -1,12 +1,26 @@
 #ifndef PRIVATE_SET_INTERSECTION_JAVASCRIPT_BINDINGS_UTILS_H_
 #define PRIVATE_SET_INTERSECTION_JAVASCRIPT_BINDINGS_UTILS_H_
 
+#include <cstdint>
 #include <vector>
 
 #include "absl/status/statusor.h"
 #include "emscripten/val.h"
 
 namespace private_set_intersection {
+
+// Converts an optional progress-slot argument into an int32 pointer, or nullptr
+// when it is absent/nullish. The argument is a numeric byte offset into the
+// module's WASM linear memory (the caller allocates the word and reads it back
+// through the HEAP32 view); the PSI operation publishes its running
+// processed-element count there. Reading it *while the call runs* requires the
+// shared-memory build plus a worker; the write itself is unconditional.
+inline int32_t* ProgressPointer(const emscripten::val& progress_ptr) {
+  if (progress_ptr.isUndefined() || progress_ptr.isNull()) {
+    return nullptr;
+  }
+  return reinterpret_cast<int32_t*>(progress_ptr.as<std::uint32_t>());
+}
 
 // Converts a StatusOr<T> to a Javascript object with the following structure:
 // {
@@ -50,8 +64,9 @@ emscripten::val ToSerializedJSObject(absl::StatusOr<T> statusor) {
     // Uint8Array(view)` copies it into a JS-owned buffer (required -- the view
     // is invalidated when byte_vector is destroyed and on any heap growth), and
     // protobuf-js consumes that buffer directly with no further copy.
-    emscripten::val byte_array = emscripten::val::global("Uint8Array").new_(
-        emscripten::typed_memory_view(size, byte_vector.data()));
+    emscripten::val byte_array =
+        emscripten::val::global("Uint8Array")
+            .new_(emscripten::typed_memory_view(size, byte_vector.data()));
     result.set("Value", byte_array);
     result.set("Status", emscripten::val::null());
   } else {

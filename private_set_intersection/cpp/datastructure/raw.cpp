@@ -16,12 +16,11 @@
 
 #include "private_set_intersection/cpp/datastructure/raw.h"
 
-#include <iostream>
-
-#include <algorithm> // std::sort, maybe std::swap
-#include <numeric> // std::iota
+#include <algorithm>  // std::sort, maybe std::swap
 #include <cmath>
-#include <utility> // maybe std::swap
+#include <iostream>
+#include <numeric>  // std::iota
+#include <utility>  // maybe std::swap
 
 #include "absl/memory/memory.h"
 #include "absl/strings/escaping.h"
@@ -58,23 +57,27 @@ Raw::Raw(std::vector<std::string> elements) : encrypted_(std::move(elements)) {}
 // Create is called by the server when constructing its startup message.
 // That is, the encrypted version of the server's own data.
 StatusOr<std::unique_ptr<Raw>> Raw::Create(
-  std::vector<std::string> elements,
-  std::vector<std::size_t>* sorting_permutation_ptr
-)
-{
+    std::vector<std::string> elements,
+    std::vector<std::size_t>* sorting_permutation_ptr) {
   std::unique_ptr<std::vector<std::size_t>> local_sorting_permutation(nullptr);
   if (sorting_permutation_ptr == nullptr) {
-    local_sorting_permutation = std::unique_ptr<std::vector<std::size_t>>(new std::vector<std::size_t>(elements.size()));
+    local_sorting_permutation = std::unique_ptr<std::vector<std::size_t>>(
+        new std::vector<std::size_t>(elements.size()));
     sorting_permutation_ptr = local_sorting_permutation.get();
-  } 
+  }
   std::vector<std::size_t>& sorting_permutation(*sorting_permutation_ptr);
-  
+  // Size the (possibly caller-provided) permutation to the element count before
+  // filling it. The in-place cycle sort below indexes sorting_permutation and
+  // elements in lockstep, so a caller vector of the wrong size would read out
+  // of bounds (both current bindings pass it pre-sized; this makes it robust).
+  sorting_permutation.resize(elements.size());
+
   std::iota(sorting_permutation.begin(), sorting_permutation.end(), 0);
 
-  std::sort(
-    sorting_permutation.begin(), sorting_permutation.end(),
-    [&elements](size_t i1, size_t i2) {return elements[i1] < elements[i2];}
-  );
+  std::sort(sorting_permutation.begin(), sorting_permutation.end(),
+            [&elements](size_t i1, size_t i2) {
+              return elements[i1] < elements[i2];
+            });
 
   std::vector<bool> index_visited(elements.size(), false);
 
@@ -90,7 +93,7 @@ StatusOr<std::unique_ptr<Raw>> Raw::Create(
     }
     elements[i] = value;
   }
-  
+
   return absl::WrapUnique(new Raw(elements));
 }
 
@@ -111,20 +114,18 @@ StatusOr<std::unique_ptr<Raw>> Raw::CreateFromProtobuf(
   return absl::WrapUnique(new Raw(encrypted_elements));
 }
 
-std::pair<std::vector<size_t>, std::vector<size_t>>
-Raw::GetAssociationTable(
-  std::vector<std::string>& decrypted) const
-{
+std::pair<std::vector<size_t>, std::vector<size_t>> Raw::GetAssociationTable(
+    std::vector<std::string>& decrypted) const {
   // decrypted are the server's response, that is the client's own data after
   // the server has encrypted it. They are not yet sorted.
   std::vector<std::size_t> permutation(decrypted.size());
 
   std::iota(permutation.begin(), permutation.end(), 0);
 
-  std::sort(
-    permutation.begin(), permutation.end(),
-    [&decrypted](size_t i1, size_t i2) {return decrypted[i1] < decrypted[i2];}
-  );
+  std::sort(permutation.begin(), permutation.end(),
+            [&decrypted](size_t i1, size_t i2) {
+              return decrypted[i1] < decrypted[i2];
+            });
 
   std::vector<bool> index_visited(decrypted.size(), false);
 
@@ -153,26 +154,34 @@ Raw::GetAssociationTable(
     // assert decrypted[i] >= encrypted_[j]
     size_t first_j = j;
     std::string first_encrypted = encrypted_[j];
-    if (decrypted[i] == encrypted_[j]) while (true) {
-      // account for the possibility that multiple decrypted[i] equal
-      // multiple encrypted
-      do {
-        decrypted_permutation.push_back(permutation[i]);
-        encrypted_permutation.push_back(j);
-        ++j;
-      } while (j < encrypted_.size() && decrypted[i] == encrypted_[j]);
+    if (decrypted[i] == encrypted_[j])
+      while (true) {
+        // account for the possibility that multiple decrypted[i] equal
+        // multiple encrypted
+        do {
+          decrypted_permutation.push_back(permutation[i]);
+          encrypted_permutation.push_back(j);
+          ++j;
+        } while (j < encrypted_.size() && decrypted[i] == encrypted_[j]);
 
-      ++i;
-      if (i < decrypted.size() && decrypted[i] == first_encrypted) {
-        // reset j so we can run it again
-        j = first_j;
-      } else {
-        break;
+        ++i;
+        if (i < decrypted.size() && decrypted[i] == first_encrypted) {
+          // reset j so we can run it again
+          j = first_j;
+        } else {
+          break;
+        }
       }
-    }
     // i and j should now have advanced past the point where ecnrypted and
-    // decrypted were equal. We advance encrypted until it is past decrypted
-    while (j < encrypted_.size() && decrypted[i] > encrypted_[j]) ++j;
+    // decrypted were equal. We advance encrypted until it is past decrypted.
+    // The duplicate-handling loop above can leave i == decrypted.size() (when
+    // the trailing decrypted values are all matched duplicates), so guard the
+    // decrypted[i] read: without it this is an out-of-bounds access -- benign
+    // in the 32-bit WASM heap but a segfault on native. The outer loop exits on
+    // the next iteration once i is out of range.
+    while (j < encrypted_.size() && i < decrypted.size() &&
+           decrypted[i] > encrypted_[j])
+      ++j;
   }
 
   return make_pair(decrypted_permutation, encrypted_permutation);

@@ -16,6 +16,7 @@
 
 #include "private_set_intersection/cpp/psi_server.h"
 
+#include <utility>
 #include <vector>
 
 #include "absl/memory/memory.h"
@@ -25,6 +26,8 @@
 #include "private_set_intersection/cpp/datastructure/bloom_filter.h"
 #include "private_set_intersection/cpp/datastructure/gcs.h"
 #include "private_set_intersection/cpp/datastructure/raw.h"
+#include "private_set_intersection/cpp/parallel_ec.h"
+#include "private_set_intersection/cpp/progress.h"
 #include "private_set_intersection/proto/psi.pb.h"
 
 namespace private_set_intersection {
@@ -97,22 +100,31 @@ StatusOr<std::unique_ptr<PsiServer>> PsiServer::CreateFromKey(
  * for the PSI protocol
  * @return StatusOr<psi_proto::ServerSetup>
  */
- StatusOr<psi_proto::ServerSetup> PsiServer::CreateSetupMessage(
+StatusOr<psi_proto::ServerSetup> PsiServer::CreateSetupMessage(
     double fpr, int64_t num_client_inputs, absl::Span<const std::string> inputs,
-    DataStructure ds,
-    std::vector<std::size_t>* sorting_permutation
-  ) const {
+    DataStructure ds, std::vector<std::size_t>* sorting_permutation,
+    int32_t* progress) const {
   auto num_inputs = static_cast<int64_t>(inputs.size());
   // Correct fpr to account for multiple client queries.
   double corrected_fpr = fpr / num_client_inputs;
+  ResetProgress(progress);
   std::vector<std::string> encrypted;
+#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+  if (absl::Status status =
+          EncryptElements(ec_cipher_.get(), inputs, &encrypted, progress);
+      !status.ok()) {
+    return status;
+  }
+#else
   encrypted.reserve(num_inputs);
-
+  ProgressCounter counter(progress);
   for (int i = 0; i < num_inputs; i++) {
     ASSIGN_OR_RETURN(std::string encrypted_element,
                      ec_cipher_->Encrypt(inputs[i]));
     encrypted.push_back(encrypted_element);
+    counter.Increment();
   }
+#endif
 
   switch (ds) {
     case DataStructure::Gcs: {
@@ -154,7 +166,7 @@ StatusOr<std::unique_ptr<PsiServer>> PsiServer::CreateFromKey(
  * @return StatusOr<psi_proto::Response>
  */
 StatusOr<psi_proto::Response> PsiServer::ProcessRequest(
-    const psi_proto::Request& client_request) const {
+    const psi_proto::Request& client_request, int32_t* progress) const {
   if (!client_request.IsInitialized()) {
     return absl::InvalidArgumentError("`client_request` is corrupt!");
   }
@@ -168,18 +180,35 @@ StatusOr<psi_proto::Response> PsiServer::ProcessRequest(
 
   // Re-encrypt elements.
   const auto& encrypted_elements = client_request.encrypted_elements();
-  const std::int64_t num_client_elements =
+  [[maybe_unused]] const std::int64_t num_client_elements =
       static_cast<std::int64_t>(encrypted_elements.size());
 
   // Create the response
   psi_proto::Response response;
 
   // Re-encrypt the request's elements and add to the response
+  ResetProgress(progress);
+#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+  std::vector<std::string> request_elements(encrypted_elements.begin(),
+                                            encrypted_elements.end());
+  std::vector<std::string> reencrypted;
+  if (absl::Status status = ReEncryptElements(
+          ec_cipher_.get(), request_elements, &reencrypted, progress);
+      !status.ok()) {
+    return status;
+  }
+  for (std::string& element : reencrypted) {
+    response.add_encrypted_elements(std::move(element));
+  }
+#else
+  ProgressCounter counter(progress);
   for (int i = 0; i < num_client_elements; i++) {
     ASSIGN_OR_RETURN(std::string encrypted,
                      ec_cipher_->ReEncrypt(encrypted_elements[i]));
     response.add_encrypted_elements(encrypted);
+    counter.Increment();
   }
+#endif
 
   // sort the resulting ciphertexts if we want to hide the intersection from the
   // client.

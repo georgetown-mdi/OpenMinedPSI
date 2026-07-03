@@ -6,6 +6,7 @@
 EMSCRIPTEN_BINDINGS(PSI_Client) {
   using absl::StatusOr;
   using emscripten::optional_override;
+  using private_set_intersection::ProgressPointer;
   using private_set_intersection::PsiClient;
   using private_set_intersection::ToJSObject;
   using private_set_intersection::ToSerializedJSObject;
@@ -34,7 +35,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
                       }))
       .function("CreateRequest",
                 optional_override([](const PsiClient& self,
-                                     const emscripten::val& byte_array) {
+                                     const emscripten::val& byte_array,
+                                     const emscripten::val& progress_ptr) {
                   std::vector<std::string> string_vector;
                   const std::size_t l = byte_array["length"].as<std::size_t>();
                   string_vector.reserve(l);
@@ -44,7 +46,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
                   }
 
                   StatusOr<psi_proto::Request> request;
-                  auto status = self.CreateRequest(string_vector);
+                  auto status = self.CreateRequest(
+                      string_vector, ProgressPointer(progress_ptr));
                   if (status.ok()) {
                     request = *status;
                   } else {
@@ -56,7 +59,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
           "GetIntersection",
           optional_override([](const PsiClient& self,
                                const emscripten::val& server_setup_array,
-                               const emscripten::val& server_response_array) {
+                               const emscripten::val& server_response_array,
+                               const emscripten::val& progress_ptr) {
             const std::size_t server_setup_length =
                 server_setup_array["length"].as<std::size_t>();
             std::string server_setup_string(server_setup_length, '\0');
@@ -80,8 +84,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
             // We need to convert to a JS array explicitly because JS
             // doesn't know about vector<int64_t>.
             StatusOr<emscripten::val> result;
-            const auto status =
-                self.GetIntersection(server_setup, server_response);
+            const auto status = self.GetIntersection(
+                server_setup, server_response, ProgressPointer(progress_ptr));
             if (status.ok()) {
               // Convert int64_t to int32_t for JS
               const std::vector<std::int64_t> unsupported_result = *status;
@@ -100,7 +104,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
           "GetAssociationTable",
           optional_override([](const PsiClient& self,
                                const emscripten::val& server_setup_array,
-                               const emscripten::val& server_response_array) {
+                               const emscripten::val& server_response_array,
+                               const emscripten::val& progress_ptr) {
             const std::size_t server_setup_length =
                 server_setup_array["length"].as<std::size_t>();
             std::string server_setup_string(server_setup_length, '\0');
@@ -124,19 +129,28 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
             // We need to convert to a JS array explicitly because JS
             // doesn't know about vector<int64_t>.
             StatusOr<emscripten::val> result;
-            const auto status =
-                self.GetAssociationTable(server_setup, server_response);
+            const auto status = self.GetAssociationTable(
+                server_setup, server_response, ProgressPointer(progress_ptr));
             if (status.ok()) {
               // Convert int64_t to int32_t for JS
-              const std::pair<std::vector<std::size_t>, std::vector<std::size_t>> unsupported_result = *status;
-              std::vector<std::int32_t> first_result(unsupported_result.first.begin(), unsupported_result.first.end());
-              std::vector<std::int32_t> second_result(unsupported_result.second.begin(), unsupported_result.second.end());
-              
+              const std::pair<std::vector<std::size_t>,
+                              std::vector<std::size_t>>
+                  unsupported_result = *status;
+              std::vector<std::int32_t> first_result(
+                  unsupported_result.first.begin(),
+                  unsupported_result.first.end());
+              std::vector<std::int32_t> second_result(
+                  unsupported_result.second.begin(),
+                  unsupported_result.second.end());
+
               // Convert vector to JS array
               std::vector<emscripten::val> supported_result(2);
-              supported_result[0] = emscripten::val::array(first_result.begin(), first_result.end());
-              supported_result[1] = emscripten::val::array(second_result.begin(), second_result.end());
-              emscripten::val array = emscripten::val::array(supported_result.begin(), supported_result.end());
+              supported_result[0] = emscripten::val::array(first_result.begin(),
+                                                           first_result.end());
+              supported_result[1] = emscripten::val::array(
+                  second_result.begin(), second_result.end());
+              emscripten::val array = emscripten::val::array(
+                  supported_result.begin(), supported_result.end());
 
               result = StatusOr<emscripten::val>(array);
             } else {
@@ -148,7 +162,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
           "GetIntersectionSize",
           optional_override([](const PsiClient& self,
                                const emscripten::val& server_setup_array,
-                               const emscripten::val& server_response_array) {
+                               const emscripten::val& server_response_array,
+                               const emscripten::val& progress_ptr) {
             const std::size_t server_setup_length =
                 server_setup_array["length"].as<std::size_t>();
             std::string server_setup_string(server_setup_length, '\0');
@@ -172,8 +187,8 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
             // We need to convert to an int32 explicitly because JS
             // doesn't have 64-bit integers.
             StatusOr<uint32_t> result;
-            const auto status =
-                self.GetIntersectionSize(server_setup, server_response);
+            const auto status = self.GetIntersectionSize(
+                server_setup, server_response, ProgressPointer(progress_ptr));
             if (status.ok()) {
               result = *status;
             } else {

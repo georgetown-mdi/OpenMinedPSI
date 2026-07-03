@@ -28,8 +28,7 @@ namespace {
 class RawTest : public ::testing::Test {
  protected:
   void SetUp(std::vector<std::string> encrypted_elements) {
-    PSI_ASSERT_OK_AND_ASSIGN(
-        container_, Raw::Create(encrypted_elements));
+    PSI_ASSERT_OK_AND_ASSIGN(container_, Raw::Create(encrypted_elements));
   }
 
   std::unique_ptr<Raw> container_;

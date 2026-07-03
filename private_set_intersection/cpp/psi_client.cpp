@@ -25,6 +25,8 @@
 #include "private_set_intersection/cpp/datastructure/bloom_filter.h"
 #include "private_set_intersection/cpp/datastructure/gcs.h"
 #include "private_set_intersection/cpp/datastructure/raw.h"
+#include "private_set_intersection/cpp/parallel_ec.h"
+#include "private_set_intersection/cpp/progress.h"
 #include "private_set_intersection/proto/psi.pb.h"
 
 namespace private_set_intersection {
@@ -96,13 +98,25 @@ StatusOr<std::unique_ptr<PsiClient>> PsiClient::CreateFromKey(
  * @return StatusOr<psi_proto::Request>
  */
 StatusOr<psi_proto::Request> PsiClient::CreateRequest(
-    absl::Span<const std::string> inputs) const {
+    absl::Span<const std::string> inputs, int32_t* progress) const {
   // Encrypt inputs one by one.
-  int64_t input_size = static_cast<int64_t>(inputs.size());
-  std::vector<std::string> encrypted_inputs(input_size);
+  [[maybe_unused]] int64_t input_size = static_cast<int64_t>(inputs.size());
+  ResetProgress(progress);
+  std::vector<std::string> encrypted_inputs;
+#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+  if (absl::Status status = EncryptElements(ec_cipher_.get(), inputs,
+                                            &encrypted_inputs, progress);
+      !status.ok()) {
+    return status;
+  }
+#else
+  encrypted_inputs.resize(input_size);
+  ProgressCounter counter(progress);
   for (int64_t i = 0; i < input_size; i++) {
     ASSIGN_OR_RETURN(encrypted_inputs[i], ec_cipher_->Encrypt(inputs[i]));
+    counter.Increment();
   }
+#endif
 
   // Create a request protobuf
   psi_proto::Request request;
@@ -128,14 +142,14 @@ StatusOr<psi_proto::Request> PsiClient::CreateRequest(
  */
 StatusOr<std::vector<int64_t>> PsiClient::GetIntersection(
     const psi_proto::ServerSetup& server_setup,
-    const psi_proto::Response& server_response) const {
+    const psi_proto::Response& server_response, int32_t* progress) const {
   if (!reveal_intersection) {
     return absl::InvalidArgumentError(
         "GetIntersection called on PsiClient with reveal_intersection == "
         "false");
   }
   ASSIGN_OR_RETURN(std::vector<int64_t> intersection,
-                   ProcessResponse(server_setup, server_response));
+                   ProcessResponse(server_setup, server_response, progress));
   intersection.shrink_to_fit();
   return intersection;
 }
@@ -146,19 +160,21 @@ StatusOr<std::vector<int64_t>> PsiClient::GetIntersection(
  * @param server_setup The original server's setup
  * @param server_response The previous server's response
  *
- * @return StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+ * @return StatusOr<std::pair<std::vector<std::size_t>,
+ * std::vector<std::size_t>>>
  */
 StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
-PsiClient::GetAssociationTable(
-    const psi_proto::ServerSetup& server_setup,
-    const psi_proto::Response& server_response) const {
+PsiClient::GetAssociationTable(const psi_proto::ServerSetup& server_setup,
+                               const psi_proto::Response& server_response,
+                               int32_t* progress) const {
   if (!reveal_intersection) {
     return absl::InvalidArgumentError(
         "GetAssociationTable called on PsiClient with reveal_intersection == "
         "false");
   }
   ASSIGN_OR_RETURN(auto associative_table,
-                   ProcessResponseForAssociationTable(server_setup, server_response));
+                   ProcessResponseForAssociationTable(
+                       server_setup, server_response, progress));
   return associative_table;
 }
 
@@ -172,9 +188,9 @@ PsiClient::GetAssociationTable(
  */
 StatusOr<int64_t> PsiClient::GetIntersectionSize(
     const psi_proto::ServerSetup& server_setup,
-    const psi_proto::Response& server_response) const {
+    const psi_proto::Response& server_response, int32_t* progress) const {
   ASSIGN_OR_RETURN(std::vector<int64_t> intersection,
-                   ProcessResponse(server_setup, server_response));
+                   ProcessResponse(server_setup, server_response, progress));
   return static_cast<int64_t>(intersection.size());
 }
 
@@ -188,7 +204,7 @@ StatusOr<int64_t> PsiClient::GetIntersectionSize(
  */
 StatusOr<std::vector<int64_t>> PsiClient::ProcessResponse(
     const psi_proto::ServerSetup& server_setup,
-    const psi_proto::Response& server_response) const {
+    const psi_proto::Response& server_response, int32_t* progress) const {
   // Ensure both items are valid
   if (!server_setup.IsInitialized()) {
     return absl::InvalidArgumentError("`server_setup` is corrupt!");
@@ -199,16 +215,28 @@ StatusOr<std::vector<int64_t>> PsiClient::ProcessResponse(
   }
 
   const auto& response_array = server_response.encrypted_elements();
+  ResetProgress(progress);
+  std::vector<std::string> decrypted;
+#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+  std::vector<std::string> response_elements(response_array.begin(),
+                                             response_array.end());
+  if (absl::Status status = DecryptElements(ec_cipher_.get(), response_elements,
+                                            &decrypted, progress);
+      !status.ok()) {
+    return status;
+  }
+#else
   const std::int64_t response_size =
       static_cast<std::int64_t>(response_array.size());
-  std::vector<std::string> decrypted;
   decrypted.reserve(response_size);
-
+  ProgressCounter counter(progress);
   for (int64_t i = 0; i < response_size; i++) {
     ASSIGN_OR_RETURN(std::string element,
                      ec_cipher_->Decrypt(response_array[i]));
     decrypted.push_back(element);
+    counter.Increment();
   }
+#endif
 
   switch (server_setup.data_structure_case()) {
     case psi_proto::ServerSetup::DataStructureCase::kRaw: {
@@ -245,7 +273,7 @@ StatusOr<std::vector<int64_t>> PsiClient::ProcessResponse(
 StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
 PsiClient::ProcessResponseForAssociationTable(
     const psi_proto::ServerSetup& server_setup,
-    const psi_proto::Response& server_response) const {
+    const psi_proto::Response& server_response, int32_t* progress) const {
   // Ensure both items are valid
   if (!server_setup.IsInitialized()) {
     return absl::InvalidArgumentError("`server_setup` is corrupt!");
@@ -256,16 +284,28 @@ PsiClient::ProcessResponseForAssociationTable(
   }
 
   const auto& response_array = server_response.encrypted_elements();
+  ResetProgress(progress);
+  std::vector<std::string> decrypted;
+#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+  std::vector<std::string> response_elements(response_array.begin(),
+                                             response_array.end());
+  if (absl::Status status = DecryptElements(ec_cipher_.get(), response_elements,
+                                            &decrypted, progress);
+      !status.ok()) {
+    return status;
+  }
+#else
   const std::int64_t response_size =
       static_cast<std::int64_t>(response_array.size());
-  std::vector<std::string> decrypted;
   decrypted.reserve(response_size);
-
+  ProgressCounter counter(progress);
   for (int64_t i = 0; i < response_size; i++) {
     ASSIGN_OR_RETURN(std::string element,
                      ec_cipher_->Decrypt(response_array[i]));
     decrypted.push_back(element);
+    counter.Increment();
   }
+#endif
 
   switch (server_setup.data_structure_case()) {
     case psi_proto::ServerSetup::DataStructureCase::kRaw: {
@@ -274,9 +314,11 @@ PsiClient::ProcessResponseForAssociationTable(
       return container->GetAssociationTable(decrypted);
     }
     case psi_proto::ServerSetup::DataStructureCase::kGcs:
-    return absl::InvalidArgumentError("associative table can only be computed for Raw data structure");
+      return absl::InvalidArgumentError(
+          "associative table can only be computed for Raw data structure");
     case psi_proto::ServerSetup::DataStructureCase::kBloomFilter:
-    return absl::InvalidArgumentError("associative table can only be computed for Raw data structure");
+      return absl::InvalidArgumentError(
+          "associative table can only be computed for Raw data structure");
     default: {
       return absl::InvalidArgumentError("Impossible");
     }
