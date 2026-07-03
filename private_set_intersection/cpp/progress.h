@@ -26,8 +26,8 @@ namespace private_set_intersection {
 // operation has encrypted / re-encrypted / decrypted so far. It is written into
 // a caller-owned 32-bit slot -- a JS ArrayBuffer/SharedArrayBuffer element for
 // the native addon, a WASM linear-memory word for the emscripten build -- so a
-// UI can poll "n so far" against the known input size N. `slot` is null when the
-// caller asked for no progress reporting.
+// UI can poll "n so far" against the known input size N. `slot` is null when
+// the caller asked for no progress reporting.
 //
 // This is a UI hint, NOT a synchronization primitive: relaxed memory order,
 // updates batched by the callers. Correctness of the PSI protocol never depends
@@ -85,8 +85,8 @@ class ProgressCounter {
   int32_t pending_ = 0;
 };
 
-// Resets a progress slot to zero at the start of an operation, so a poller never
-// observes a previous operation's final count. No-op when `slot` is null.
+// Resets a progress slot to zero at the start of an operation, so a poller
+// never observes a previous operation's final count. No-op when `slot` is null.
 inline void ResetProgress(int32_t* slot) {
   if (slot != nullptr) {
     reinterpret_cast<std::atomic<int32_t>*>(slot)->store(

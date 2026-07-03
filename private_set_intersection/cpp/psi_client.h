@@ -147,14 +147,13 @@ class PsiClient {
 
   // As `GetIntersection`, but calculates the full mapping between client
   // and server elements.
-  // 
+  //
   // Returns INVALID_ARGUMENT if any input messages are malformed, or INTERNAL
   // if decryption fails.
-StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
-GetAssociationTable(
-      const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response,
-      int32_t* progress = nullptr) const;
+  StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+  GetAssociationTable(const psi_proto::ServerSetup& server_setup,
+                      const psi_proto::Response& server_response,
+                      int32_t* progress = nullptr) const;
 
   // As `GetIntersection`, but only reveals the size of the intersection. Use
   // this function if this instance was created with `reveal_intersection =
@@ -185,10 +184,9 @@ GetAssociationTable(
       const psi_proto::Response& server_response,
       int32_t* progress = nullptr) const;
   StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
-  ProcessResponseForAssociationTable(
-      const psi_proto::ServerSetup& server_setup,
-      const psi_proto::Response& server_response,
-      int32_t* progress = nullptr) const;
+  ProcessResponseForAssociationTable(const psi_proto::ServerSetup& server_setup,
+                                     const psi_proto::Response& server_response,
+                                     int32_t* progress = nullptr) const;
 
   std::unique_ptr<::private_join_and_compute::ECCommutativeCipher> ec_cipher_;
   bool reveal_intersection;

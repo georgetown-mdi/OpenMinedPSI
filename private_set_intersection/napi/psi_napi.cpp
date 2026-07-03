@@ -39,10 +39,9 @@
 #include <utility>
 #include <vector>
 
-#include "napi.h"
-
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "napi.h"
 #include "private_set_intersection/cpp/datastructure/datastructure.h"
 #include "private_set_intersection/cpp/package.h"
 #include "private_set_intersection/cpp/psi_client.h"
@@ -95,7 +94,8 @@ Napi::Uint8Array ToUint8Array(Napi::Env env, const std::string& bytes) {
 // Serialize a protobuf into a fresh Uint8Array wrapped as { Value, Status }.
 // The bytes are returned as a Uint8Array (not a boxed JS number array) so a
 // multi-MB message stays a single contiguous buffer that protobuf-js consumes
-// directly -- see the rationale in javascript/cpp/utils.h::ToSerializedJSObject.
+// directly -- see the rationale in
+// javascript/cpp/utils.h::ToSerializedJSObject.
 template <typename Proto>
 Napi::Value SerializedOk(Napi::Env env, const Proto& proto) {
   const size_t size = proto.ByteSizeLong();
@@ -134,9 +134,9 @@ Napi::Array ToNumberArray(Napi::Env env, const std::vector<T>& values) {
 
 // The int32 slot backing an optional Int32Array argument, into which an
 // operation publishes its running processed-element count, or nullptr when the
-// argument is absent/nullish. Callers typically back it with a SharedArrayBuffer
-// and poll it from another thread (a worker) while the op runs. Only the first
-// element is used.
+// argument is absent/nullish. Callers typically back it with a
+// SharedArrayBuffer and poll it from another thread (a worker) while the op
+// runs. Only the first element is used.
 int32_t* ProgressSlot(const Napi::CallbackInfo& info, size_t index) {
   if (info.Length() <= index) return nullptr;
   const Napi::Value value = info[index];
@@ -197,8 +197,8 @@ class PsiServerWrap : public Napi::ObjectWrap<PsiServerWrap> {
  private:
   static Napi::Value CreateWithNewKey(const Napi::CallbackInfo& info);
   static Napi::Value CreateFromKey(const Napi::CallbackInfo& info);
-  static Napi::Value Wrap(
-      Napi::Env env, absl::StatusOr<std::unique_ptr<PsiServer>> server);
+  static Napi::Value Wrap(Napi::Env env,
+                          absl::StatusOr<std::unique_ptr<PsiServer>> server);
 
   Napi::Value CreateSetupMessage(const Napi::CallbackInfo& info);
   Napi::Value ProcessRequest(const Napi::CallbackInfo& info);
@@ -283,9 +283,9 @@ Napi::Value PsiServerWrap::CreateSetupMessage(const Napi::CallbackInfo& info) {
   const DataStructure ds =
       static_cast<DataStructure>(info[3].As<Napi::Number>().Int32Value());
   // Optional and nullish-tolerant, mirroring ProgressSlot: an absent or
-  // non-boolean arg (the natural way to skip it while still passing the progress
-  // slot at index 5) means "no permutation" rather than a thrown TypeError. Only
-  // an explicit boolean true requests it.
+  // non-boolean arg (the natural way to skip it while still passing the
+  // progress slot at index 5) means "no permutation" rather than a thrown
+  // TypeError. Only an explicit boolean true requests it.
   const bool include_permutation = info.Length() > 4 && info[4].IsBoolean() &&
                                    info[4].As<Napi::Boolean>().Value();
   int32_t* progress = ProgressSlot(info, 5);
@@ -326,8 +326,8 @@ Napi::Value PsiServerWrap::ProcessRequest(const Napi::CallbackInfo& info) {
   psi_proto::Request request;
   if (!request.ParseFromArray(request_bytes.data(),
                               static_cast<int>(request_bytes.size()))) {
-    return MakeError(env,
-                     absl::InvalidArgumentError("failed to parse client request"));
+    return MakeError(
+        env, absl::InvalidArgumentError("failed to parse client request"));
   }
   absl::StatusOr<psi_proto::Response> response =
       server_->ProcessRequest(request, progress);
@@ -362,8 +362,8 @@ class PsiClientWrap : public Napi::ObjectWrap<PsiClientWrap> {
  private:
   static Napi::Value CreateWithNewKey(const Napi::CallbackInfo& info);
   static Napi::Value CreateFromKey(const Napi::CallbackInfo& info);
-  static Napi::Value Wrap(
-      Napi::Env env, absl::StatusOr<std::unique_ptr<PsiClient>> client);
+  static Napi::Value Wrap(Napi::Env env,
+                          absl::StatusOr<std::unique_ptr<PsiClient>> client);
 
   Napi::Value CreateRequest(const Napi::CallbackInfo& info);
   Napi::Value GetIntersection(const Napi::CallbackInfo& info);
@@ -509,8 +509,8 @@ Napi::Value PsiClientWrap::GetAssociationTable(const Napi::CallbackInfo& info) {
     return error;
   }
   absl::StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
-      table = client_->GetAssociationTable(setup, response,
-                                           ProgressSlot(info, 2));
+      table =
+          client_->GetAssociationTable(setup, response, ProgressSlot(info, 2));
   if (!table.ok()) {
     return MakeError(env, table.status());
   }
@@ -556,8 +556,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   auto data = std::make_unique<AddonData>();
   data->server_ctor = Napi::Persistent(PsiServerWrap::DefineConstructor(env));
   data->client_ctor = Napi::Persistent(PsiClientWrap::DefineConstructor(env));
-  // Release only once SetInstanceData has taken ownership, so AddonData (and its
-  // two constructor references) is not leaked if that call itself throws.
+  // Release only once SetInstanceData has taken ownership, so AddonData (and
+  // its two constructor references) is not leaked if that call itself throws.
   env.SetInstanceData<AddonData>(data.get());
   data.release();
 
@@ -565,21 +565,20 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("PsiClient", PsiClientWrap::MakeFactory(env));
 
   Napi::Object data_structure = Napi::Object::New(env);
-  data_structure.Set("Raw",
-                     Napi::Number::New(env, static_cast<int>(DataStructure::Raw)));
-  data_structure.Set("GCS",
-                     Napi::Number::New(env, static_cast<int>(DataStructure::Gcs)));
+  data_structure.Set(
+      "Raw", Napi::Number::New(env, static_cast<int>(DataStructure::Raw)));
+  data_structure.Set(
+      "GCS", Napi::Number::New(env, static_cast<int>(DataStructure::Gcs)));
   data_structure.Set(
       "BloomFilter",
       Napi::Number::New(env, static_cast<int>(DataStructure::BloomFilter)));
   exports.Set("DataStructure", data_structure);
 
   Napi::Object package = Napi::Object::New(env);
-  package.Set("version",
-              Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
-                return Napi::String::New(info.Env(),
-                                         std::string(Package::kVersion));
-              }));
+  package.Set(
+      "version", Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
+        return Napi::String::New(info.Env(), std::string(Package::kVersion));
+      }));
   exports.Set("Package", package);
 
   return exports;

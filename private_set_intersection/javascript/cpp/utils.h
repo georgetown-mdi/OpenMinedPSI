@@ -64,8 +64,9 @@ emscripten::val ToSerializedJSObject(absl::StatusOr<T> statusor) {
     // Uint8Array(view)` copies it into a JS-owned buffer (required -- the view
     // is invalidated when byte_vector is destroyed and on any heap growth), and
     // protobuf-js consumes that buffer directly with no further copy.
-    emscripten::val byte_array = emscripten::val::global("Uint8Array").new_(
-        emscripten::typed_memory_view(size, byte_vector.data()));
+    emscripten::val byte_array =
+        emscripten::val::global("Uint8Array")
+            .new_(emscripten::typed_memory_view(size, byte_vector.data()));
     result.set("Value", byte_array);
     result.set("Status", emscripten::val::null());
   } else {

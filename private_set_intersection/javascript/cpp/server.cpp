@@ -34,43 +34,48 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
                         return ToJSObject(ToShared(PsiServer::CreateFromKey(
                             byte_string, reveal_intersection)));
                       }))
-      .function("CreateSetupMessage",
-                optional_override([](const PsiServer &self, const double fpr,
-                                     const std::size_t num_client_inputs,
-                                     const emscripten::val &byte_array,
-                                     const DataStructure ds,
-                                     const bool include_sorting_permutation,
-                                     const emscripten::val &progress_ptr
-                                    ) {
-                  std::vector<std::string> string_vector;
-                  const std::size_t l = byte_array["length"].as<std::size_t>();
-                  string_vector.reserve(l);
+      .function(
+          "CreateSetupMessage",
+          optional_override([](const PsiServer &self, const double fpr,
+                               const std::size_t num_client_inputs,
+                               const emscripten::val &byte_array,
+                               const DataStructure ds,
+                               const bool include_sorting_permutation,
+                               const emscripten::val &progress_ptr) {
+            std::vector<std::string> string_vector;
+            const std::size_t l = byte_array["length"].as<std::size_t>();
+            string_vector.reserve(l);
 
-                  for (std::size_t i = 0; i < l; ++i) {
-                    string_vector.push_back(byte_array[i].as<std::string>());
-                  }
+            for (std::size_t i = 0; i < l; ++i) {
+              string_vector.push_back(byte_array[i].as<std::string>());
+            }
 
-                  StatusOr<psi_proto::ServerSetup> server_setup;
-                  std::unique_ptr<std::vector<std::size_t>> sorting_permutation(nullptr);
-                  if (ds == DataStructure::Raw) {
-                    sorting_permutation = std::unique_ptr<std::vector<std::size_t>>(new std::vector<std::size_t>(l));
-                  }
-                  const auto status = self.CreateSetupMessage(
-                      fpr, num_client_inputs, string_vector, ds,
-                      sorting_permutation.get(), ProgressPointer(progress_ptr));
-                  if (status.ok()) {
-                    server_setup = *status;
-                  } else {
-                    server_setup = status.status();
-                  }
-                  auto result = ToSerializedJSObject(server_setup);
-                  if (include_sorting_permutation && ds == DataStructure::Raw) {
-                    std::vector<int32_t> sorting_permutation_int(sorting_permutation->begin(), sorting_permutation->end());
-                    emscripten::val sorting_permutation_array = emscripten::val::array(sorting_permutation_int.begin(), sorting_permutation_int.end());
-                    result.set("Permutation", sorting_permutation_array);
-                  }
-                  return result;
-                }))
+            StatusOr<psi_proto::ServerSetup> server_setup;
+            std::unique_ptr<std::vector<std::size_t>> sorting_permutation(
+                nullptr);
+            if (ds == DataStructure::Raw) {
+              sorting_permutation = std::unique_ptr<std::vector<std::size_t>>(
+                  new std::vector<std::size_t>(l));
+            }
+            const auto status = self.CreateSetupMessage(
+                fpr, num_client_inputs, string_vector, ds,
+                sorting_permutation.get(), ProgressPointer(progress_ptr));
+            if (status.ok()) {
+              server_setup = *status;
+            } else {
+              server_setup = status.status();
+            }
+            auto result = ToSerializedJSObject(server_setup);
+            if (include_sorting_permutation && ds == DataStructure::Raw) {
+              std::vector<int32_t> sorting_permutation_int(
+                  sorting_permutation->begin(), sorting_permutation->end());
+              emscripten::val sorting_permutation_array =
+                  emscripten::val::array(sorting_permutation_int.begin(),
+                                         sorting_permutation_int.end());
+              result.set("Permutation", sorting_permutation_array);
+            }
+            return result;
+          }))
       .function("ProcessRequest",
                 optional_override([](const PsiServer &self,
                                      const emscripten::val &byte_array,
@@ -86,9 +91,8 @@ EMSCRIPTEN_BINDINGS(PSI_Server) {
                   client_request.ParseFromString(byte_string);
 
                   StatusOr<psi_proto::Response> response;
-                  const auto status =
-                      self.ProcessRequest(client_request,
-                                          ProgressPointer(progress_ptr));
+                  const auto status = self.ProcessRequest(
+                      client_request, ProgressPointer(progress_ptr));
                   if (status.ok()) {
                     response = *status;
                   } else {

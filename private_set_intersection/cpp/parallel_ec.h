@@ -48,9 +48,10 @@ namespace private_set_intersection {
 // native prebuild build); the WASM build keeps the original single-threaded
 // loops and never references these symbols.
 //
-// `progress`, when non-null, is a caller-owned int32 slot into which the running
-// count of processed elements is published (see progress.h). Each shard batches
-// its own updates, so the slot advances monotonically toward inputs.size().
+// `progress`, when non-null, is a caller-owned int32 slot into which the
+// running count of processed elements is published (see progress.h). Each shard
+// batches its own updates, so the slot advances monotonically toward
+// inputs.size().
 
 absl::Status EncryptElements(
     ::private_join_and_compute::ECCommutativeCipher* primary,

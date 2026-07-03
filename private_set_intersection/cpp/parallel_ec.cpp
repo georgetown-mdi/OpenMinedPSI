@@ -49,19 +49,18 @@ absl::StatusOr<std::unique_ptr<ECCommutativeCipher>> CloneCipher(
       NID_X9_62_prime256v1, key_bytes, ECCommutativeCipher::HashType::SHA256);
 }
 
-// Below kMinInputsForThreads inputs the thread spawn + per-shard key setup costs
-// outweigh the parallel speedup, so run single-threaded. Otherwise cap the
-// thread count so each shard still processes a worthwhile chunk. These are
-// throughput tunables, not correctness parameters -- the output is identical for
-// any thread count.
+// Below kMinInputsForThreads inputs the thread spawn + per-shard key setup
+// costs outweigh the parallel speedup, so run single-threaded. Otherwise cap
+// the thread count so each shard still processes a worthwhile chunk. These are
+// throughput tunables, not correctness parameters -- the output is identical
+// for any thread count.
 constexpr std::size_t kMinInputsForThreads = 1024;
 constexpr std::size_t kMinInputsPerThread = 512;
 
 std::size_t ChooseThreadCount(std::size_t n) {
   if (n < kMinInputsForThreads) return 1;
   const unsigned hardware = std::thread::hardware_concurrency();
-  const std::size_t hw =
-      hardware == 0 ? 1 : static_cast<std::size_t>(hardware);
+  const std::size_t hw = hardware == 0 ? 1 : static_cast<std::size_t>(hardware);
   const std::size_t by_work = n / kMinInputsPerThread;
   return std::max<std::size_t>(1, std::min<std::size_t>(hw, by_work));
 }
@@ -163,10 +162,11 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
       threads.emplace_back(run_shard, next_shard);
     }
   } catch (...) {
-    // std::thread construction can fail (e.g. EAGAIN under thread pressure). Run
-    // the shards that could not be spawned on the calling thread below, rather
-    // than letting the already-spawned joinable threads reach std::terminate as
-    // the vector unwinds. The result is identical, just less parallel.
+    // std::thread construction can fail (e.g. EAGAIN under thread pressure).
+    // Run the shards that could not be spawned on the calling thread below,
+    // rather than letting the already-spawned joinable threads reach
+    // std::terminate as the vector unwinds. The result is identical, just less
+    // parallel.
   }
   run_shard(0);  // the calling thread owns shard 0
   for (std::size_t t = next_shard; t < num_threads; ++t) {

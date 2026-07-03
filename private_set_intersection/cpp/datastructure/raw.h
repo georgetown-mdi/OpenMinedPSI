@@ -17,11 +17,11 @@
 #ifndef PRIVATE_SET_INTERSECTION_CPP_RAW_H_
 #define PRIVATE_SET_INTERSECTION_CPP_RAW_H_
 
-#include <cstddef> // std::size_t
-#include <memory>  // unique_ptr
-#include <utility> // std::pair
-#include <string>  // std::string
-#include <vector>  // std::vector
+#include <cstddef>  // std::size_t
+#include <memory>   // unique_ptr
+#include <string>   // std::string
+#include <utility>  // std::pair
+#include <vector>   // std::vector
 
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -38,9 +38,8 @@ class Raw {
   Raw() = delete;
 
   static StatusOr<std::unique_ptr<Raw>> Create(
-    std::vector<std::string> elements,
-    std::vector<std::size_t>* sorting_permutation = nullptr
-  );
+      std::vector<std::string> elements,
+      std::vector<std::size_t>* sorting_permutation = nullptr);
 
   // Creates a container containing holding encrypted values from a protocol
   // buffer

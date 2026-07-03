@@ -100,12 +100,10 @@ StatusOr<std::unique_ptr<PsiServer>> PsiServer::CreateFromKey(
  * for the PSI protocol
  * @return StatusOr<psi_proto::ServerSetup>
  */
- StatusOr<psi_proto::ServerSetup> PsiServer::CreateSetupMessage(
+StatusOr<psi_proto::ServerSetup> PsiServer::CreateSetupMessage(
     double fpr, int64_t num_client_inputs, absl::Span<const std::string> inputs,
-    DataStructure ds,
-    std::vector<std::size_t>* sorting_permutation,
-    int32_t* progress
-  ) const {
+    DataStructure ds, std::vector<std::size_t>* sorting_permutation,
+    int32_t* progress) const {
   auto num_inputs = static_cast<int64_t>(inputs.size());
   // Correct fpr to account for multiple client queries.
   double corrected_fpr = fpr / num_client_inputs;
@@ -194,8 +192,8 @@ StatusOr<psi_proto::Response> PsiServer::ProcessRequest(
   std::vector<std::string> request_elements(encrypted_elements.begin(),
                                             encrypted_elements.end());
   std::vector<std::string> reencrypted;
-  if (absl::Status status = ReEncryptElements(ec_cipher_.get(), request_elements,
-                                              &reencrypted, progress);
+  if (absl::Status status = ReEncryptElements(
+          ec_cipher_.get(), request_elements, &reencrypted, progress);
       !status.ok()) {
     return status;
   }

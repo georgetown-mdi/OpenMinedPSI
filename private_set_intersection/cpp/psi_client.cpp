@@ -160,20 +160,21 @@ StatusOr<std::vector<int64_t>> PsiClient::GetIntersection(
  * @param server_setup The original server's setup
  * @param server_response The previous server's response
  *
- * @return StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
+ * @return StatusOr<std::pair<std::vector<std::size_t>,
+ * std::vector<std::size_t>>>
  */
 StatusOr<std::pair<std::vector<std::size_t>, std::vector<std::size_t>>>
-PsiClient::GetAssociationTable(
-    const psi_proto::ServerSetup& server_setup,
-    const psi_proto::Response& server_response, int32_t* progress) const {
+PsiClient::GetAssociationTable(const psi_proto::ServerSetup& server_setup,
+                               const psi_proto::Response& server_response,
+                               int32_t* progress) const {
   if (!reveal_intersection) {
     return absl::InvalidArgumentError(
         "GetAssociationTable called on PsiClient with reveal_intersection == "
         "false");
   }
   ASSIGN_OR_RETURN(auto associative_table,
-                   ProcessResponseForAssociationTable(server_setup,
-                                                      server_response, progress));
+                   ProcessResponseForAssociationTable(
+                       server_setup, server_response, progress));
   return associative_table;
 }
 
@@ -313,9 +314,11 @@ PsiClient::ProcessResponseForAssociationTable(
       return container->GetAssociationTable(decrypted);
     }
     case psi_proto::ServerSetup::DataStructureCase::kGcs:
-    return absl::InvalidArgumentError("associative table can only be computed for Raw data structure");
+      return absl::InvalidArgumentError(
+          "associative table can only be computed for Raw data structure");
     case psi_proto::ServerSetup::DataStructureCase::kBloomFilter:
-    return absl::InvalidArgumentError("associative table can only be computed for Raw data structure");
+      return absl::InvalidArgumentError(
+          "associative table can only be computed for Raw data structure");
     default: {
       return absl::InvalidArgumentError("Impossible");
     }
