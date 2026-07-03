@@ -150,6 +150,18 @@ int32_t* ProgressSlot(const Napi::CallbackInfo& info, size_t index) {
   return array.ElementLength() > 0 ? array.Data() : nullptr;
 }
 
+// Guards an instance method against being called after delete() zeroed the
+// wrapped instance: schedules a JS exception and returns true when the instance
+// is gone, so the caller returns instead of dereferencing null (which would
+// crash the process). The TypeScript wrapper tracks deletion and never reaches
+// this; it only fires on direct misuse of the raw addon.
+bool ThrowIfDeleted(Napi::Env env, const void* instance, const char* what) {
+  if (instance != nullptr) return false;
+  Napi::Error::New(env, std::string(what) + " has been deleted")
+      .ThrowAsJavaScriptException();
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Per-environment addon state.
 //
@@ -260,6 +272,7 @@ Napi::Value PsiServerWrap::CreateFromKey(const Napi::CallbackInfo& info) {
 
 Napi::Value PsiServerWrap::CreateSetupMessage(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, server_.get(), "PsiServer")) return env.Undefined();
   const double fpr = info[0].As<Napi::Number>().DoubleValue();
   const int64_t num_client_inputs = info[1].As<Napi::Number>().Int64Value();
   const std::vector<std::string> inputs =
@@ -300,6 +313,7 @@ Napi::Value PsiServerWrap::CreateSetupMessage(const Napi::CallbackInfo& info) {
 
 Napi::Value PsiServerWrap::ProcessRequest(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, server_.get(), "PsiServer")) return env.Undefined();
   const std::string request_bytes = ToByteString(info[0]);
   int32_t* progress = ProgressSlot(info, 1);
   psi_proto::Request request;
@@ -317,7 +331,9 @@ Napi::Value PsiServerWrap::ProcessRequest(const Napi::CallbackInfo& info) {
 }
 
 Napi::Value PsiServerWrap::GetPrivateKeyBytes(const Napi::CallbackInfo& info) {
-  return ToUint8Array(info.Env(), server_->GetPrivateKeyBytes());
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, server_.get(), "PsiServer")) return env.Undefined();
+  return ToUint8Array(env, server_->GetPrivateKeyBytes());
 }
 
 Napi::Value PsiServerWrap::Delete(const Napi::CallbackInfo& info) {
@@ -424,6 +440,7 @@ Napi::Value PsiClientWrap::CreateFromKey(const Napi::CallbackInfo& info) {
 
 Napi::Value PsiClientWrap::CreateRequest(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
   const std::vector<std::string> inputs =
       ToStringVector(info[0].As<Napi::Array>());
   int32_t* progress = ProgressSlot(info, 1);
@@ -459,6 +476,7 @@ bool PsiClientWrap::ParseSetupAndResponse(const Napi::CallbackInfo& info,
 
 Napi::Value PsiClientWrap::GetIntersection(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
   psi_proto::ServerSetup setup;
   psi_proto::Response response;
   Napi::Value error;
@@ -475,6 +493,7 @@ Napi::Value PsiClientWrap::GetIntersection(const Napi::CallbackInfo& info) {
 
 Napi::Value PsiClientWrap::GetAssociationTable(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
   psi_proto::ServerSetup setup;
   psi_proto::Response response;
   Napi::Value error;
@@ -495,6 +514,7 @@ Napi::Value PsiClientWrap::GetAssociationTable(const Napi::CallbackInfo& info) {
 
 Napi::Value PsiClientWrap::GetIntersectionSize(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
   psi_proto::ServerSetup setup;
   psi_proto::Response response;
   Napi::Value error;
@@ -510,7 +530,9 @@ Napi::Value PsiClientWrap::GetIntersectionSize(const Napi::CallbackInfo& info) {
 }
 
 Napi::Value PsiClientWrap::GetPrivateKeyBytes(const Napi::CallbackInfo& info) {
-  return ToUint8Array(info.Env(), client_->GetPrivateKeyBytes());
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
+  return ToUint8Array(env, client_->GetPrivateKeyBytes());
 }
 
 Napi::Value PsiClientWrap::Delete(const Napi::CallbackInfo& info) {
