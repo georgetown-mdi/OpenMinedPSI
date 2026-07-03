@@ -66,8 +66,9 @@ jobs:
 
       - name: Build addon
         run: |
-          # No `eval`: the --linkopt value is passed as a single quoted argument,
-          # so a Windows path with spaces or shell metacharacters is inert.
+          # No `eval`: the --linkopt value is passed as one double-quoted
+          # argument, so $NODE_LIB still expands but a Windows path with spaces or
+          # shell metacharacters is inert (word-splitting and globbing suppressed).
           if [ "${{ runner.os }}" = "Windows" ]; then
             # MSVC does not allow undefined symbols; link Node's import library.
             bazel build -c opt --config=napi "--linkopt=$NODE_LIB" \

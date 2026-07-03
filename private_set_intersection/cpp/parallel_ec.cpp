@@ -96,10 +96,14 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
   // Contiguous shards. Distinct index ranges write to distinct vector elements,
   // so there is no data race on `outputs` (it is pre-sized, never reallocated).
   std::string key = primary->GetPrivateKeyBytes();
-  // Zero this extra copy of the private key when the parallel section exits
-  // (every return path below is covered, after the threads are joined). The
-  // copies inside the primary and per-shard ECCommutativeCipher objects are the
-  // baseline residency and unchanged.
+  // Zero this transport copy of the private key when the parallel section exits
+  // (every return path below is covered, after the threads are joined). This is
+  // incremental, not complete: each per-shard clone cipher holds its own key
+  // copy, so threading adds num_threads-1 copies over the single-threaded
+  // baseline, and neither those nor the primary cipher's copy is cleansed here
+  // because the upstream ECCommutativeCipher does not cleanse its own key on
+  // destruction. Eliminating the residual plaintext-key copies is an upstream
+  // change that would also cover the single-threaded and WASM builds.
   struct KeyWiper {
     std::string& key;
     ~KeyWiper() { OPENSSL_cleanse(key.data(), key.size()); }
