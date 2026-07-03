@@ -248,11 +248,14 @@ Napi::Value PsiServerWrap::Wrap(
   // finalizer frees it. This way it is reclaimed even if constructor.New()
   // throws (e.g. OOM) before the wrapper takes ownership; on the success path
   // the constructor moves out of it, so the finalizer frees a null unique_ptr.
-  auto* owned = new std::unique_ptr<PsiServer>(std::move(*server));
+  // Hold it in a local unique_ptr until External::New has adopted it, so it is
+  // not leaked if that call itself throws before the finalizer is attached.
+  auto owned = std::make_unique<std::unique_ptr<PsiServer>>(std::move(*server));
   Napi::External<std::unique_ptr<PsiServer>> external =
       Napi::External<std::unique_ptr<PsiServer>>::New(
-          env, owned,
+          env, owned.get(),
           [](Napi::Env, std::unique_ptr<PsiServer>* held) { delete held; });
+  owned.release();  // the External's finalizer now owns it
   Napi::Object instance = data->server_ctor.New({external});
   return MakeOk(env, instance);
 }
@@ -279,8 +282,12 @@ Napi::Value PsiServerWrap::CreateSetupMessage(const Napi::CallbackInfo& info) {
       ToStringVector(info[2].As<Napi::Array>());
   const DataStructure ds =
       static_cast<DataStructure>(info[3].As<Napi::Number>().Int32Value());
-  const bool include_permutation =
-      info.Length() > 4 && info[4].As<Napi::Boolean>().Value();
+  // Optional and nullish-tolerant, mirroring ProgressSlot: an absent or
+  // non-boolean arg (the natural way to skip it while still passing the progress
+  // slot at index 5) means "no permutation" rather than a thrown TypeError. Only
+  // an explicit boolean true requests it.
+  const bool include_permutation = info.Length() > 4 && info[4].IsBoolean() &&
+                                   info[4].As<Napi::Boolean>().Value();
   int32_t* progress = ProgressSlot(info, 5);
 
   // The Raw container reorders (sorts) its elements and reports the permutation
@@ -416,11 +423,12 @@ Napi::Value PsiClientWrap::Wrap(
   // Owned by a heap unique_ptr carried by the External (finalizer frees it), so
   // the instance is reclaimed even if constructor.New() throws before the
   // wrapper takes ownership. See PsiServerWrap::Wrap.
-  auto* owned = new std::unique_ptr<PsiClient>(std::move(*client));
+  auto owned = std::make_unique<std::unique_ptr<PsiClient>>(std::move(*client));
   Napi::External<std::unique_ptr<PsiClient>> external =
       Napi::External<std::unique_ptr<PsiClient>>::New(
-          env, owned,
+          env, owned.get(),
           [](Napi::Env, std::unique_ptr<PsiClient>* held) { delete held; });
+  owned.release();  // the External's finalizer now owns it
   Napi::Object instance = data->client_ctor.New({external});
   return MakeOk(env, instance);
 }
@@ -548,7 +556,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   auto data = std::make_unique<AddonData>();
   data->server_ctor = Napi::Persistent(PsiServerWrap::DefineConstructor(env));
   data->client_ctor = Napi::Persistent(PsiClientWrap::DefineConstructor(env));
-  env.SetInstanceData<AddonData>(data.release());
+  // Release only once SetInstanceData has taken ownership, so AddonData (and its
+  // two constructor references) is not leaked if that call itself throws.
+  env.SetInstanceData<AddonData>(data.get());
+  data.release();
 
   exports.Set("PsiServer", PsiServerWrap::MakeFactory(env));
   exports.Set("PsiClient", PsiClientWrap::MakeFactory(env));
