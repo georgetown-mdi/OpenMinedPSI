@@ -68,7 +68,12 @@ StatusOr<std::unique_ptr<Raw>> Raw::Create(
     sorting_permutation_ptr = local_sorting_permutation.get();
   } 
   std::vector<std::size_t>& sorting_permutation(*sorting_permutation_ptr);
-  
+  // Size the (possibly caller-provided) permutation to the element count before
+  // filling it. The in-place cycle sort below indexes sorting_permutation and
+  // elements in lockstep, so a caller vector of the wrong size would read out of
+  // bounds (both current bindings pass it pre-sized; this makes it robust).
+  sorting_permutation.resize(elements.size());
+
   std::iota(sorting_permutation.begin(), sorting_permutation.end(), 0);
 
   std::sort(
@@ -171,8 +176,15 @@ Raw::GetAssociationTable(
       }
     }
     // i and j should now have advanced past the point where ecnrypted and
-    // decrypted were equal. We advance encrypted until it is past decrypted
-    while (j < encrypted_.size() && decrypted[i] > encrypted_[j]) ++j;
+    // decrypted were equal. We advance encrypted until it is past decrypted.
+    // The duplicate-handling loop above can leave i == decrypted.size() (when
+    // the trailing decrypted values are all matched duplicates), so guard the
+    // decrypted[i] read: without it this is an out-of-bounds access -- benign in
+    // the 32-bit WASM heap but a segfault on native. The outer loop exits on the
+    // next iteration once i is out of range.
+    while (j < encrypted_.size() && i < decrypted.size() &&
+           decrypted[i] > encrypted_[j])
+      ++j;
   }
 
   return make_pair(decrypted_permutation, encrypted_permutation);
