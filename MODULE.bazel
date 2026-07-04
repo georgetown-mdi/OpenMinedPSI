@@ -55,7 +55,11 @@ single_version_override(
 ## build opts in per-leg with --platforms=@zig_sdk//libc_aware/platform:<leg>
 ## and --extra_toolchains=@zig_sdk//libc_aware/toolchain:<leg> (see
 ## native-prebuilds.yml), so the host, WASM, and every other build resolve the
-## default toolchain unchanged.
+## default toolchain unchanged. That last part also relies on
+## hermetic_cc_toolchain's own register_toolchains being dev_dependency-gated
+## (bzlmod ignores it for a non-root dep) -- re-verify that on any version bump,
+## since a non-dev registration would silently route plain host builds through
+## zig's unconstrained toolchain.
 zig_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
 use_repo(zig_toolchains, "zig_sdk")
 
