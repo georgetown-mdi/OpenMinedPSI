@@ -35,14 +35,24 @@ package(default_visibility = ["//visibility:public"])
 cc_binary(
     name = "psi_native_shared",
     srcs = ["psi_napi.cpp"],
+    additional_linker_inputs = ["napi.lds"],
     linkshared = True,
     linkopts = select({
         "@platforms//os:osx": ["-Wl,-undefined,dynamic_lookup"],
         "@platforms//os:windows": [],
-        # parallel_ec uses std::thread; older glibc / non-glibc libc need
-        # -pthread explicitly (recent glibc folds it into libc, where it is a
-        # harmless no-op). macOS threads need no flag; Windows uses its own.
-        "//conditions:default": ["-pthread"],
+        # Linux/ELF. -pthread: parallel_ec uses std::thread; older glibc /
+        # non-glibc libc need it explicitly (recent glibc folds it into libc, a
+        # harmless no-op there). The version script exports ONLY the Node entry
+        # point and binds every other defined symbol locally (local: *), so the
+        # symbols pulled from static archives (BoringSSL, protobuf, abseil) and
+        # the addon's statically linked libc++ (zig cc) stay out of the dynamic
+        # table and are never interposed by the host process's libstdc++ -- see
+        # napi.lds. (zig cc's linker driver rejects --exclude-libs, but the
+        # version script's local: * already achieves the same hiding.)
+        "//conditions:default": [
+            "-pthread",
+            "-Wl,--version-script,$(location napi.lds)",
+        ],
     }),
     deps = [
         "//private_set_intersection/cpp:package",

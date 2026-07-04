@@ -7,18 +7,29 @@
 # Manual: run from the Actions tab (workflow_dispatch). The `package` job's
 # tarball artifact is what gets vendored downstream (e.g. psilink's lib/).
 #
-# Node-API is ABI-stable, so one .node per (OS, arch) serves every supported
-# Node -- the addon is built against the runner's Node and loads on any Node
-# with the same N-API version.
+# Node-API is ABI-stable, so one .node per (OS, arch, libc) serves every
+# supported Node -- the addon is built against a pinned N-API level (NAPI_VERSION
+# in MODULE.bazel) and loads on any Node with that N-API version or newer.
 #
-# Job layout (three jobs, two of them fully parallel):
-#   build-addon   matrix, one native .node per (OS, arch)
-#   build-bundle  the arch-independent WASM/protoc/rollup dist/ tree; NO `needs`
-#                 so it runs alongside build-addon instead of behind it
-#   package       downloads both, folds the prebuilds in, and packs -- the cheap
-#                 tail that runs no compiler
-# Splitting build-bundle out is the big win: its ~7 min of platform-independent
-# work no longer serializes after the slow Windows addon build.
+# LINUX PORTABILITY. The Linux legs are cross-compiled with the hermetic zig cc
+# toolchain (hermetic_cc_toolchain, pinned in MODULE.bazel), NOT the runner's
+# system GCC. Two consequences:
+#   - the glibc floor is set by the zig SDK (the built addon needs only
+#     GLIBC_2.17), so it loads on Debian 12 / Ubuntu 22.04 / the node:26-bookworm
+#     dev container -- the runner's own glibc is irrelevant and not load-bearing;
+#   - zig can target musl, so there is an Alpine (node:*-alpine) prebuild too.
+# Both are byte-identical to the glibc build and to the WASM engine. The floor is
+# enforced by a symbol-scan gate (check-libc-floor.sh) per leg, so drift like the
+# earlier GLIBC_2.38 regression fails the build instead of shipping silently.
+#
+# Job layout:
+#   build-addon    matrix, one native .node per (OS, arch, libc)
+#   validate-linux matrix, load each Linux prebuild in its real libc/arch
+#                  (glibc -> node:*-bookworm-slim, musl -> node:*-alpine) on a
+#                  native runner -- no emulation
+#   build-bundle   the arch-independent WASM/protoc/rollup dist/ tree; NO `needs`
+#                  so it runs alongside build-addon
+#   package        downloads the prebuilds + bundle, folds them in, and packs
 
 name: Native prebuilds
 
@@ -32,20 +43,26 @@ defaults:
 
 jobs:
   build-addon:
-    name: addon (${{ matrix.target }})
+    name: addon (${{ matrix.target }}${{ matrix.libc && format(' {0}', matrix.libc) || '' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04, target: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: linux-arm64 }
-          - { os: macos-14, target: darwin-arm64 }
+          # Linux: all four (arch x libc) legs cross-compile with zig cc on the
+          # same x64 runner. The runner arch/glibc does not affect the output --
+          # the zig SDK does -- so there is no need for a native arm64 build
+          # runner here. `zig` is the hermetic_cc_toolchain libc-aware target.
+          - { os: ubuntu-24.04, target: linux-x64,   libc: glibc, zig: linux_amd64_gnu.2.28 }
+          - { os: ubuntu-24.04, target: linux-x64,   libc: musl,  zig: linux_amd64_musl }
+          - { os: ubuntu-24.04, target: linux-arm64, libc: glibc, zig: linux_arm64_gnu.2.28 }
+          - { os: ubuntu-24.04, target: linux-arm64, libc: musl,  zig: linux_arm64_musl }
+          - { os: macos-14, target: darwin-arm64, macos_min: "11.0" }
           # darwin-x64 is cross-compiled on the arm64 runner (the macOS SDK is
           # universal) rather than a native macos-13 Intel runner, which GitHub
           # is deprecating and which queued for a runner indefinitely. The .node
           # links with -undefined dynamic_lookup, so no import library is needed.
-          - { os: macos-14, target: darwin-x64, bazel_cpu: darwin_x86_64 }
+          - { os: macos-14, target: darwin-x64, bazel_cpu: darwin_x86_64, macos_min: "10.15" }
           # Windows is the finicky target: the .node link resolves N-API symbols
           # against Node's import library (node.lib), and the transitive
           # rules_swift toolchain probe needs a real Swift install even though
@@ -73,8 +90,9 @@ jobs:
           # post-if !cancelled(), so a failed cold run can seed an empty -warm
           # entry that then sticks and Windows silently goes cold again (correct
           # artifacts, just slow). If that happens, bump the suffix to recover.
-          # Non-Windows caches were healthy, so they keep their keys.
-          disk-cache: napi-${{ matrix.target }}${{ runner.os == 'Windows' && '-warm' || '' }}
+          # Non-Windows caches were healthy, so they keep their keys. The Linux
+          # keys carry the libc so the glibc and musl legs cache independently.
+          disk-cache: napi-${{ matrix.target }}${{ matrix.libc && format('-{0}', matrix.libc) || '' }}${{ runner.os == 'Windows' && '-warm' || '' }}
           repository-cache: true
 
       - name: Resolve Node version (Windows)
@@ -124,34 +142,62 @@ jobs:
 
       - name: Build addon
         run: |
-          # matrix.bazel_cpu cross-compiles to another arch (darwin-x64 on the
-          # arm64 runner); empty for a native build.
-          cpu_flag=""
-          [ -n "${{ matrix.bazel_cpu }}" ] && cpu_flag="--cpu=${{ matrix.bazel_cpu }}"
-          # No `eval`: the --linkopt value is passed as one double-quoted
-          # argument, so $NODE_LIB still expands but a Windows path with spaces or
-          # shell metacharacters is inert (word-splitting and globbing suppressed).
-          if [ "${{ runner.os }}" = "Windows" ]; then
+          if [ -n "${{ matrix.zig }}" ]; then
+            # Linux: cross-compile with the hermetic zig cc toolchain for a low
+            # glibc floor / musl. --force_pic makes the static deps (BoringSSL,
+            # protobuf, abseil) position-independent, which the musl leg needs to
+            # link as a shared object (their thread_local TLS would otherwise use
+            # the local-exec model, illegal in a -shared .node); a no-op for the
+            # glibc leg, which is already PIC. The version script in napi/BUILD
+            # keeps the addon's statically linked libc++ from being interposed by
+            # the host process's libstdc++.
+            bazel build -c opt --strip=always --config=napi --force_pic \
+              --platforms=@zig_sdk//libc_aware/platform:${{ matrix.zig }} \
+              --extra_toolchains=@zig_sdk//libc_aware/toolchain:${{ matrix.zig }} \
+              //private_set_intersection/napi:addon
+          elif [ "${{ runner.os }}" = "Windows" ]; then
             # MSVC does not allow undefined symbols; link Node's import library.
             # MSVC also needs /std:c++17 explicitly: the repo's Unix -std=c++17
             # cxxopt is ignored by cl.exe, which then defaults below C++17 and
             # trips abseil's version check. Host tools (protoc) need it too.
             # protobuf 30.2 hard-errors on MSVC+Bazel unless protobuf_allow_msvc.
+            # No `eval`: the --linkopt value is passed as one double-quoted
+            # argument, so $NODE_LIB still expands but a Windows path with spaces
+            # or shell metacharacters is inert.
             bazel build -c opt --config=napi \
               --cxxopt=/std:c++17 --host_cxxopt=/std:c++17 \
               --define=protobuf_allow_msvc=true \
               "--linkopt=$NODE_LIB" \
               //private_set_intersection/napi:addon
           else
+            # macOS: native arm64, or darwin-x64 cross-compiled on the arm64
+            # runner (--cpu). Pin the deployment target so the addon loads on
+            # older macOS than the runner's, not just the runner's own version.
+            cpu_flag=""
+            [ -n "${{ matrix.bazel_cpu }}" ] && cpu_flag="--cpu=${{ matrix.bazel_cpu }}"
             bazel build -c opt --strip=always --config=napi $cpu_flag \
+              --copt=-mmacosx-version-min=${{ matrix.macos_min }} \
+              --linkopt=-mmacosx-version-min=${{ matrix.macos_min }} \
               //private_set_intersection/napi:addon
           fi
 
+      - name: Enforce libc floor (Linux)
+        # Fail the leg if the built addon would not load on the platforms psilink
+        # targets: glibc floor above 2.28, any dynamic libstdc++ (GLIBCXX_) dep,
+        # a musl build with glibc symbols, or a re-exported C++ runtime. This is
+        # what prevents a toolchain/runner change from silently raising the floor.
+        if: matrix.libc
+        run: |
+          bash private_set_intersection/napi/check-libc-floor.sh \
+            bazel-bin/private_set_intersection/napi/psi_native.node \
+            "${{ matrix.libc }}" 2.28
+
       - name: Liveness check (loads + runs a real setup)
-        # Skip for a cross-compiled target: the runner cannot dlopen a .node
-        # built for another arch (an arm64 runner cannot load an x86_64 addon).
-        # The wire interop is already proven on darwin-arm64 from identical source.
-        if: ${{ !matrix.bazel_cpu }}
+        # Native-load smoke test where the runner can dlopen the .node: macOS
+        # arm64 and Windows x64. Skipped for the cross-compiled darwin-x64 (an
+        # arm64 runner cannot load an x86_64 addon) and for every Linux leg (its
+        # target libc/arch is validated natively in validate-linux instead).
+        if: runner.os != 'Linux' && !matrix.bazel_cpu
         run: |
           node -e "
             const addon = require('./bazel-bin/private_set_intersection/napi/psi_native.node');
@@ -165,15 +211,60 @@ jobs:
 
       - name: Stage prebuild
         run: |
+          # node-gyp-build resolves prebuilds/<platform>-<arch>/<file>. The two
+          # Linux legs share a directory but carry a libc tag in the filename so
+          # a glibc build is never selected under musl (or vice versa); darwin and
+          # windows stay untagged (one libc each).
           mkdir -p "staging/${{ matrix.target }}"
           cp bazel-bin/private_set_intersection/napi/psi_native.node \
-            "staging/${{ matrix.target }}/node.napi.node"
+            "staging/${{ matrix.target }}/node.napi${{ matrix.libc && format('.{0}', matrix.libc) || '' }}.node"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: prebuild-${{ matrix.target }}
+          name: prebuild-${{ matrix.target }}${{ matrix.libc && format('-{0}', matrix.libc) || '' }}
           path: staging/
           if-no-files-found: error
+
+  validate-linux:
+    name: validate (${{ matrix.target }} ${{ matrix.libc }})
+    needs: build-addon
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Load each Linux prebuild in its real libc, on a native runner (arm64
+          # legs on the free public arm64 runner -- no QEMU). glibc is validated
+          # on Debian bookworm (glibc 2.36, the dev-container libc); musl on
+          # Alpine (the shipped CLI image's libc). The symbol-scan gate already
+          # proved the floor; this proves the addon actually loads and runs.
+          - { target: linux-x64,   libc: glibc, os: ubuntu-24.04,     image: "node:22-bookworm-slim" }
+          - { target: linux-x64,   libc: musl,  os: ubuntu-24.04,     image: "node:22-alpine" }
+          - { target: linux-arm64, libc: glibc, os: ubuntu-24.04-arm, image: "node:22-bookworm-slim" }
+          - { target: linux-arm64, libc: musl,  os: ubuntu-24.04-arm, image: "node:22-alpine" }
+    steps:
+      - name: Download prebuild
+        uses: actions/download-artifact@v8
+        with:
+          name: prebuild-${{ matrix.target }}-${{ matrix.libc }}
+          path: staging
+
+      - name: Load + run the addon in a ${{ matrix.libc }} container
+        run: |
+          docker run --rm -v "$PWD/staging/${{ matrix.target }}:/p:ro" ${{ matrix.image }} \
+            node -e "
+              const addon = require('/p/node.napi.${{ matrix.libc }}.node');
+              const s = addon.PsiServer.CreateWithNewKey(true);
+              if (s.Status) throw new Error(s.Status.Message);
+              const r = s.Value.CreateSetupMessage(0, -1, ['a', 'b', 'c'], addon.DataStructure.Raw, false);
+              if (r.Status) throw new Error(r.Status.Message);
+              // exercise the threaded EC path (>1024 elements) too
+              const big = Array.from({ length: 2000 }, (_, i) => 'e' + i);
+              const r2 = s.Value.CreateSetupMessage(0, -1, big, addon.DataStructure.Raw, false);
+              if (r2.Status) throw new Error(r2.Status.Message);
+              console.log('addon OK on ${{ matrix.target }}/${{ matrix.libc }}: setup', r.Value.length, 'threaded', r2.Value.length);
+              s.Value.delete();
+            "
 
   build-bundle:
     name: build WASM + rollup bundle
@@ -214,7 +305,7 @@ jobs:
 
   package:
     name: gather + pack tarball
-    needs: [build-addon, build-bundle]
+    needs: [build-addon, validate-linux, build-bundle]
     runs-on: ubuntu-24.04
     steps:
       # Checkout only supplies the pack script; this job runs no build.
