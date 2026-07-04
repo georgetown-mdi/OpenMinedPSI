@@ -127,6 +127,8 @@
     "https://bcr.bazel.build/modules/grpc/1.66.0.bcr.3/MODULE.bazel": "f6047e89faf488f5e3e65cb2594c6f5e86992abec7487163ff6b623526e543b0",
     "https://bcr.bazel.build/modules/grpc/1.72.0/MODULE.bazel": "b2a82e2678717683f918ac87364005fd0bf3ae3bfca9b0cae68e918ba42594b1",
     "https://bcr.bazel.build/modules/grpc/1.72.0/source.json": "214430b7958731283a23d0aeed8b5e1fd6a08132eb98fe77d5110f5142959335",
+    "https://bcr.bazel.build/modules/hermetic_cc_toolchain/3.1.1/MODULE.bazel": "164331a6e73093376a19eaa1eae45a94aad3245e9e79d8f31237f4a8eb6c1c41",
+    "https://bcr.bazel.build/modules/hermetic_cc_toolchain/3.1.1/source.json": "a2f67694b91ae575e2715fa2c5745c8c9879e7132852ef45c05b4e25a0d3b423",
     "https://bcr.bazel.build/modules/jsoncpp/1.9.5/MODULE.bazel": "31271aedc59e815656f5736f282bb7509a97c7ecb43e927ac1a37966e0578075",
     "https://bcr.bazel.build/modules/jsoncpp/1.9.6/MODULE.bazel": "2f8d20d3b7d54143213c4dfc3d98225c42de7d666011528dc8fe91591e2e17b0",
     "https://bcr.bazel.build/modules/jsoncpp/1.9.6/source.json": "a04756d367a2126c3541682864ecec52f92cdee80a35735a3cb249ce015ca000",
@@ -858,6 +860,54 @@
             "emsdk+",
             "bazel_tools",
             "bazel_tools"
+          ]
+        ]
+      }
+    },
+    "@@hermetic_cc_toolchain+//toolchain:ext.bzl%toolchains": {
+      "general": {
+        "bzlTransitiveDigest": "QE9mmKKNnRnnIzR5esB4//YvnfXT+tjg6NPgrdOQDnM=",
+        "usagesDigest": "L2hmNCqRiMrj8exIBqX7ZVr6e7n2lpNcXgbotV/RWQo=",
+        "recordedFileInputs": {},
+        "recordedDirentsInputs": {},
+        "envVariables": {},
+        "generatedRepoSpecs": {
+          "zig_sdk": {
+            "repoRuleId": "@@hermetic_cc_toolchain+//toolchain:defs.bzl%zig_repository",
+            "attributes": {
+              "version": "0.12.0",
+              "url_formats": [
+                "https://mirror.bazel.build/ziglang.org/download/{version}/zig-{host_platform}-{version}.{_ext}",
+                "https://ziglang.org/download/{version}/zig-{host_platform}-{version}.{_ext}"
+              ],
+              "host_platform_sha256": {
+                "linux-aarch64": "754f1029484079b7e0ca3b913a0a2f2a6afd5a28990cb224fe8845e72f09de63",
+                "linux-x86_64": "c7ae866b8a76a568e2d5cfd31fe89cdb629bdd161fdd5018b29a4a0a17045cad",
+                "macos-aarch64": "294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f",
+                "macos-x86_64": "4d411bf413e7667821324da248e8589278180dbc197f4f282b7dbb599a689311",
+                "windows-aarch64": "04c6b92689241ca7a8a59b5f12d2ca2820c09d5043c3c4808b7e93e41c7bf97b",
+                "windows-x86_64": "2199eb4c2000ddb1fba85ba78f1fcf9c1fb8b3e57658f6a627a8e513131893f5"
+              },
+              "host_platform_ext": {
+                "linux-aarch64": "tar.xz",
+                "linux-x86_64": "tar.xz",
+                "macos-aarch64": "tar.xz",
+                "macos-x86_64": "tar.xz",
+                "windows-x86_64": "zip"
+              }
+            }
+          }
+        },
+        "recordedRepoMappingEntries": [
+          [
+            "hermetic_cc_toolchain+",
+            "bazel_tools",
+            "bazel_tools"
+          ],
+          [
+            "hermetic_cc_toolchain+",
+            "hermetic_cc_toolchain",
+            "hermetic_cc_toolchain+"
           ]
         ]
       }
