@@ -92,7 +92,12 @@ jobs:
           # shell metacharacters is inert (word-splitting and globbing suppressed).
           if [ "${{ runner.os }}" = "Windows" ]; then
             # MSVC does not allow undefined symbols; link Node's import library.
-            bazel build -c opt --config=napi "--linkopt=$NODE_LIB" \
+            # MSVC also needs /std:c++17 explicitly: the repo's Unix -std=c++17
+            # cxxopt is ignored by cl.exe, which then defaults below C++17 and
+            # trips abseil's version check. Host tools (protoc) need it too.
+            bazel build -c opt --config=napi \
+              --cxxopt=/std:c++17 --host_cxxopt=/std:c++17 \
+              "--linkopt=$NODE_LIB" \
               //private_set_intersection/napi:addon
           else
             bazel build -c opt --strip=always --config=napi $cpu_flag \
