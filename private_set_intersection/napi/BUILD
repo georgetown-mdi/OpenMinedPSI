@@ -35,7 +35,13 @@ package(default_visibility = ["//visibility:public"])
 cc_binary(
     name = "psi_native_shared",
     srcs = ["psi_napi.cpp"],
-    additional_linker_inputs = ["napi.lds"],
+    # Only the Linux/ELF link consumes the version script (see linkopts below);
+    # keep it off the macOS/Windows link actions entirely.
+    additional_linker_inputs = select({
+        "@platforms//os:osx": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["napi.lds"],
+    }),
     linkshared = True,
     linkopts = select({
         "@platforms//os:osx": ["-Wl,-undefined,dynamic_lookup"],

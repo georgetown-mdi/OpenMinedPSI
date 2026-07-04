@@ -190,9 +190,14 @@ jobs:
         # what prevents a toolchain/runner change from silently raising the floor.
         if: matrix.libc
         run: |
+          # Derive the glibc floor from the zig target (linux_<arch>_gnu.2.28) so
+          # the gate and the toolchain never drift apart; the musl leg keeps the
+          # default and ignores it.
+          floor=2.28
+          case "${{ matrix.zig }}" in *gnu.*) floor="${{ matrix.zig }}"; floor="${floor##*gnu.}" ;; esac
           bash private_set_intersection/napi/check-libc-floor.sh \
             bazel-bin/private_set_intersection/napi/psi_native.node \
-            "${{ matrix.libc }}" 2.28
+            "${{ matrix.libc }}" "$floor"
 
       - name: Liveness check (loads + runs a real setup)
         # Native-load smoke test where the runner can dlopen the .node: macOS
@@ -239,7 +244,10 @@ jobs:
           # legs on the free public arm64 runner -- no QEMU). glibc is validated
           # on Debian bookworm (glibc 2.36, the dev-container libc); musl on
           # Alpine (the shipped CLI image's libc). The symbol-scan gate already
-          # proved the floor; this proves the addon actually loads and runs.
+          # proved the floor; this proves the addon actually loads and runs. The
+          # image tags float on purpose: this is a load test, so tracking the
+          # current bookworm/alpine libc is the point -- the shipped floor is
+          # fixed by the symbol-scan gate, not by these images.
           - { target: linux-x64,   libc: glibc, os: ubuntu-24.04,     image: "node:22-bookworm-slim" }
           - { target: linux-x64,   libc: musl,  os: ubuntu-24.04,     image: "node:22-alpine" }
           - { target: linux-arm64, libc: glibc, os: ubuntu-24.04-arm, image: "node:22-bookworm-slim" }

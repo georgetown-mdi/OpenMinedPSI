@@ -27,6 +27,14 @@ max="${3:-2.28}"
 fail=0
 say() { echo "  $*"; }
 
+# Every check below reads the file with readelf and guards the pipeline with
+# `|| true` to absorb grep's no-match exit. Confirm up front that the artifact is
+# a valid ELF object: otherwise a truncated or non-ELF file would make readelf
+# fail, leave the symbol sets empty, and pass every check silently.
+if ! readelf -h "$f" >/dev/null 2>&1; then
+  echo "== FAIL: $f is not a readable ELF object =="; exit 1
+fi
+
 syms=$(readelf --dyn-syms --wide "$f" | grep -oE 'GLIBC_[0-9.]+|GLIBCXX_[0-9.]+|CXXABI_[0-9.]+' | sort -Vu || true)
 needed=$(readelf -d "$f" | awk '/NEEDED/ {print $NF}' | tr -d '[]')
 exported=$(readelf --dyn-syms --wide "$f" | awk '$7 != "UND" && ($5 == "GLOBAL" || $5 == "WEAK") {print $8}' | grep -v '^$' || true)
@@ -41,8 +49,11 @@ if echo "$needed" | grep -qiE 'libstdc\+\+|libc\+\+|libgcc_s'; then
   say "FAIL: NEEDED pulls a C++ runtime: $needed"; fail=1
 fi
 
-# 4. Interposition-regression guard: never re-export operator new/delete.
-if echo "$exported" | grep -qE '^_Zn|^_Zd'; then
+# 4. Interposition-regression guard: never re-export operator new/delete. Match
+# only their Itanium manglings -- _Znw (new), _Zna (new[]), _Zdl (delete), _Zda
+# (delete[]) -- not the broader ^_Zn/^_Zd, which also catch operator!=, operator*
+# and other unrelated operators.
+if echo "$exported" | grep -qE '^_Znw|^_Zna|^_Zdl|^_Zda'; then
   say "FAIL: exports C++ operator new/delete -- version script regressed"; fail=1
 fi
 
