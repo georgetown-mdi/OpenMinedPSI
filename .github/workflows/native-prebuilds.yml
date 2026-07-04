@@ -32,20 +32,24 @@ jobs:
           - { os: ubuntu-24.04, target: linux-x64 }
           - { os: ubuntu-24.04-arm, target: linux-arm64 }
           - { os: macos-14, target: darwin-arm64 }
-          - { os: macos-13, target: darwin-x64 }
-          # Windows is the required-but-finicky target: the .node link must
-          # resolve the N-API symbols against Node's import library (node.lib).
-          # This job wires that up but is the one cell not yet verified on a
-          # real runner -- expect to iterate here.
+          # darwin-x64 is cross-compiled on the arm64 runner (the macOS SDK is
+          # universal) rather than a native macos-13 Intel runner, which GitHub
+          # is deprecating and which queued for a runner indefinitely. The .node
+          # links with -undefined dynamic_lookup, so no import library is needed.
+          - { os: macos-14, target: darwin-x64, bazel_cpu: darwin_x86_64 }
+          # Windows is the finicky target: the .node link resolves N-API symbols
+          # against Node's import library (node.lib), and the transitive
+          # rules_swift toolchain probe needs a real Swift install even though
+          # nothing here uses Swift. Both are wired below.
           - { os: windows-latest, target: win32-x64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - uses: bazel-contrib/setup-bazel@0.15.0
+      - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
           disk-cache: napi-${{ matrix.target }}
@@ -64,21 +68,49 @@ jobs:
           echo "NODE_LIB=$node_lib" >> "$GITHUB_ENV"
           echo "resolved node.lib: $node_lib"
 
+      - name: Set up Swift (Windows)
+        # rules_swift is pulled in transitively (by protobuf) and its Windows
+        # toolchain autoconfiguration hard-fails when no Swift compiler is on
+        # PATH -- it needs swiftc, SDKROOT, and the SDK's Info.plist. This addon
+        # is pure C++ and never invokes Swift (Linux degrades quietly; only the
+        # Windows path is strict), so install a real toolchain purely to satisfy
+        # the probe.
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5 # v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
+
       - name: Build addon
         run: |
+          # matrix.bazel_cpu cross-compiles to another arch (darwin-x64 on the
+          # arm64 runner); empty for a native build.
+          cpu_flag=""
+          [ -n "${{ matrix.bazel_cpu }}" ] && cpu_flag="--cpu=${{ matrix.bazel_cpu }}"
           # No `eval`: the --linkopt value is passed as one double-quoted
           # argument, so $NODE_LIB still expands but a Windows path with spaces or
           # shell metacharacters is inert (word-splitting and globbing suppressed).
           if [ "${{ runner.os }}" = "Windows" ]; then
             # MSVC does not allow undefined symbols; link Node's import library.
-            bazel build -c opt --config=napi "--linkopt=$NODE_LIB" \
+            # MSVC also needs /std:c++17 explicitly: the repo's Unix -std=c++17
+            # cxxopt is ignored by cl.exe, which then defaults below C++17 and
+            # trips abseil's version check. Host tools (protoc) need it too.
+            # protobuf 30.2 hard-errors on MSVC+Bazel unless protobuf_allow_msvc.
+            bazel build -c opt --config=napi \
+              --cxxopt=/std:c++17 --host_cxxopt=/std:c++17 \
+              --define=protobuf_allow_msvc=true \
+              "--linkopt=$NODE_LIB" \
               //private_set_intersection/napi:addon
           else
-            bazel build -c opt --strip=always --config=napi \
+            bazel build -c opt --strip=always --config=napi $cpu_flag \
               //private_set_intersection/napi:addon
           fi
 
       - name: Liveness check (loads + runs a real setup)
+        # Skip for a cross-compiled target: the runner cannot dlopen a .node
+        # built for another arch (an arm64 runner cannot load an x86_64 addon).
+        # The wire interop is already proven on darwin-arm64 from identical source.
+        if: ${{ !matrix.bazel_cpu }}
         run: |
           node -e "
             const addon = require('./bazel-bin/private_set_intersection/napi/psi_native.node');
@@ -96,7 +128,7 @@ jobs:
           cp bazel-bin/private_set_intersection/napi/psi_native.node \
             "staging/${{ matrix.target }}/node.napi.node"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: prebuild-${{ matrix.target }}
           path: staging/
@@ -107,13 +139,13 @@ jobs:
     needs: build-addon
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - uses: bazel-contrib/setup-bazel@0.15.0
+      - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
           disk-cache: napi-package
@@ -123,7 +155,7 @@ jobs:
         run: npm ci
 
       - name: Gather prebuilds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: prebuild-*
           path: prebuilds-dist
@@ -134,7 +166,7 @@ jobs:
           bash private_set_intersection/javascript/scripts/assemble-native-package.sh \
             "$GITHUB_WORKSPACE/prebuilds-dist"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openmined-psi-tarball
           path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
