@@ -8,6 +8,11 @@ build:wasm --platforms=@emsdk//:platform_wasm
 # Native N-API addon (private_set_intersection/napi). Enables the threaded
 # per-element EC paths in parallel_ec.cpp / psi_server.cpp / psi_client.cpp.
 # The WASM build never uses this config, so it stays single-threaded and
-# byte-identical. Build the prebuilt addon with:
+# byte-identical. This config alone builds a host-native addon for local checks:
 #   bazel build -c opt --config=napi //private_set_intersection/napi:addon
+# The SHIPPED per-platform prebuilds add the hermetic zig cross-toolchain and,
+# on Linux, --force_pic -- which makes the object a proper shared library with a
+# dlopen-safe (dynamic) TLS model. A local build without --force_pic runs on the
+# host but is not what ships; see .github/workflows/native-prebuilds.yml for the
+# exact per-leg command.
 build:napi --copt=-DPSI_ENABLE_THREADS

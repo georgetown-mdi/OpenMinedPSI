@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 #
-# Build-time gate for the native N-API prebuilds. Fails the build if a freshly
-# built .node would not load on the platforms psilink targets:
+# Build-time gate for the native N-API prebuilds. It asserts the POSITIVE shape
+# of a loadable, self-contained addon rather than denylisting known-bad patterns,
+# so a new failure mode cannot slip through an unenumerated case. Fails the build
+# unless the freshly built .node is:
 #
-#   1. It carries a dynamic C++ runtime dependency (GLIBCXX_/CXXABI_ versioned
-#      symbols, or libstdc++/libc++/libgcc_s in NEEDED). The zig cc build links
-#      libc++ statically, so any such dependency is a regression that would raise
-#      the runtime floor (e.g. RHEL/Alma 8 lack GLIBCXX_3.4.32).
-#   2. (glibc) It requires a GLIBC_ symbol newer than the declared floor -- the
-#      exact drift that shipped a GLIBC_2.38 addon before. The floor is enforced
-#      here, not assumed from the runner, because the hermetic zig toolchain --
-#      not the runner's glibc -- determines it.
-#   3. (musl) It references any glibc versioned symbol at all.
-#   4. It re-exports C++ operator new/delete. Only napi_register_module_v1 (plus
-#      linker-generated __start/__stop markers) should be exported; re-exporting
-#      the C++ runtime is what let the host libstdc++ interpose the addon's libc++
-#      and crash it with `free(): invalid pointer`. Guards that regression.
+#   - an ELF shared object (ET_DYN) that exports napi_register_module_v1 -- i.e.
+#     actually a loadable Node addon, not a static executable or a stray object;
+#   - free of any dynamic C++ runtime: no GLIBCXX_/CXXABI_ versioned symbols; no
+#     re-exported operator new/delete (which would let the host libstdc++
+#     interpose the addon's statically linked libc++ -- the `free(): invalid
+#     pointer` crash); and no UNDEFINED operator new/delete / __cxa_* / _Unwind_*
+#     / typeinfo (which, if libc++/libc++abi/libunwind stopped being static, would
+#     resolve from the host runtime at load -- the same mismatch in reverse);
+#   - linked only against its own libc: every NEEDED entry is in a small per-libc
+#     allowlist, so libstdc++/libc++/libgcc_s/libunwind or any other runtime (and,
+#     on the musl leg, a glibc soname) are rejected by construction;
+#   - within the glibc floor (glibc leg), or free of any glibc reference (musl).
+#
+# The floor is enforced here, not assumed from the runner, because the hermetic
+# zig toolchain -- not the runner's glibc -- determines it; this is the drift that
+# shipped a GLIBC_2.38 addon before.
 #
 # Usage: check-libc-floor.sh <addon.node> <glibc|musl> [max_glibc=2.28]
 
@@ -27,41 +32,72 @@ max="${3:-2.28}"
 fail=0
 say() { echo "  $*"; }
 
-# Every check below reads the file with readelf and guards the pipeline with
-# `|| true` to absorb grep's no-match exit. Confirm up front that the artifact is
-# a valid ELF object: otherwise a truncated or non-ELF file would make readelf
-# fail, leave the symbol sets empty, and pass every check silently.
+echo "== libc-floor check: $f (expect $libc, glibc floor $max) =="
+
+# The checks below parse readelf output and absorb grep's no-match exit with
+# `|| true`. Assert first that the artifact is a shared object, so a truncated,
+# non-ELF, static-executable, or relocatable file fails loudly here instead of
+# yielding empty symbol/NEEDED sets that pass every check silently.
 if ! readelf -h "$f" >/dev/null 2>&1; then
   echo "== FAIL: $f is not a readable ELF object =="; exit 1
 fi
+if [ "$(readelf -h "$f" | awk '/^ *Type:/ {print $2; exit}')" != "DYN" ]; then
+  echo "== FAIL: $f is not an ELF shared object (ET_DYN) =="; exit 1
+fi
 
 syms=$(readelf --dyn-syms --wide "$f" | grep -oE 'GLIBC_[0-9.]+|GLIBCXX_[0-9.]+|CXXABI_[0-9.]+' | sort -Vu || true)
-needed=$(readelf -d "$f" | awk '/NEEDED/ {print $NF}' | tr -d '[]')
-exported=$(readelf --dyn-syms --wide "$f" | awk '$7 != "UND" && ($5 == "GLOBAL" || $5 == "WEAK") {print $8}' | grep -v '^$' || true)
+needed=$(readelf -d "$f" | awk '/NEEDED/ {print $NF}' | tr -d '[]' || true)
+exported=$(readelf --dyn-syms --wide "$f" | awk '$7 != "UND" && ($5 == "GLOBAL" || $5 == "WEAK") {print $8}' | sed 's/@.*//' | grep -v '^$' | sort -u || true)
+undef=$(readelf --dyn-syms --wide "$f" | awk '$7 == "UND" {print $8}' | sed 's/@.*//' | grep -v '^$' | sort -u || true)
 
-echo "== libc-floor check: $f (expect $libc, glibc floor $max) =="
+# It must actually be a Node addon.
+if ! echo "$exported" | grep -qx 'napi_register_module_v1'; then
+  say "FAIL: does not export napi_register_module_v1 -- not a Node addon"; fail=1
+fi
 
-# 1. No dynamic C++ runtime dependency (libc++ must be statically linked).
+# No dynamic C++ runtime -- three ways it could sneak in:
+#   (a) versioned libstdc++ symbols;
 if echo "$syms" | grep -qE 'GLIBCXX_|CXXABI_'; then
   say "FAIL: dynamic libstdc++ symbols (GLIBCXX_/CXXABI_) present"; fail=1
 fi
-if echo "$needed" | grep -qiE 'libstdc\+\+|libc\+\+|libgcc_s'; then
-  say "FAIL: NEEDED pulls a C++ runtime: $needed"; fail=1
-fi
-
-# 4. Interposition-regression guard: never re-export operator new/delete. Match
-# only their Itanium manglings -- _Znw (new), _Zna (new[]), _Zdl (delete), _Zda
-# (delete[]) -- not the broader ^_Zn/^_Zd, which also catch operator!=, operator*
-# and other unrelated operators.
+#   (b) re-exported operator new/delete. Match only the Itanium manglings
+#       _Znw/_Zna/_Zdl/_Zda, not the broader ^_Zn/^_Zd (operator!=, operator*, ...).
 if echo "$exported" | grep -qE '^_Znw|^_Zna|^_Zdl|^_Zda'; then
-  say "FAIL: exports C++ operator new/delete -- version script regressed"; fail=1
+  say "FAIL: re-exports C++ operator new/delete -- version script regressed"; fail=1
+fi
+#   (c) UNDEFINED C++ runtime symbols would resolve from the host at load. Allow
+#       only the libc __cxa_ hooks (atexit/finalize), which are shared with the
+#       process legitimately.
+badundef=$(echo "$undef" \
+  | grep -E '^_Znw|^_Zna|^_Zdl|^_Zda|^__cxa_|^_Unwind_|^__gxx_personality|^_ZT[ISV]' \
+  | grep -vE '^__cxa_atexit$|^__cxa_finalize$|^__cxa_thread_atexit_impl$' || true)
+if [ -n "$badundef" ]; then
+  say "FAIL: undefined C++ runtime symbols would resolve from the host: $(echo "$badundef" | paste -sd, -)"; fail=1
 fi
 
+# Linked only against its own libc: every NEEDED entry must be in the per-libc
+# allowlist. This rejects any C++ or auxiliary runtime by construction, and -- on
+# the musl leg -- a glibc soname.
+case "$libc" in
+  glibc) allow='^(libc|libm|libdl|libpthread|librt)\.so\.[0-9]+$|^ld-linux' ;;
+  musl) allow='^libc\.so$|^libc\.musl-|^ld-musl' ;;
+  *) say "FAIL: unknown libc '$libc' (expected glibc or musl)"; fail=1; allow='.^' ;;
+esac
+while IFS= read -r n; do
+  [ -z "$n" ] && continue
+  if ! echo "$n" | grep -qE "$allow"; then
+    say "FAIL: NEEDED '$n' is not a permitted $libc library"; fail=1
+  fi
+done <<EOF
+$needed
+EOF
+
+# libc floor.
 case "$libc" in
   glibc)
     # `|| true`: grep exits 1 when $syms carries no GLIBC_ line (a GLIBCXX_-only
-    # regression, already flagged above), which under `set -o pipefail` would
-    # abort the script before it prints its own verdict.
+    # regression, flagged above), which under pipefail would abort before the
+    # verdict.
     hi=$(echo "$syms" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1 || true)
     if [ -n "$hi" ] && [ "$(printf '%s\n%s\n' "$hi" "$max" | sort -V | tail -1)" != "$max" ]; then
       say "FAIL: requires GLIBC_$hi > floor $max"; fail=1
@@ -70,20 +106,11 @@ case "$libc" in
     fi
     ;;
   musl)
-    # A correct zig musl build references no glibc versioned symbols AND links
-    # musl's libc.so, not glibc's versioned sonames. Check both: the versioned
-    # symbol scan alone would miss an unversioned glibc import (__libc_start_main
-    # and the like) on a mislabeled build.
     if echo "$syms" | grep -qE 'GLIBC_'; then
       say "FAIL: musl build references glibc versioned symbols: $(echo "$syms" | paste -sd, -)"; fail=1
-    elif echo "$needed" | grep -qE 'libc\.so\.6|libm\.so\.6|ld-linux'; then
-      say "FAIL: musl build links a glibc soname (NEEDED: $(echo "$needed" | paste -sd' ' -))"; fail=1
     else
-      say "OK: no glibc symbols or sonames"
+      say "OK: no glibc symbols"
     fi
-    ;;
-  *)
-    say "FAIL: unknown libc '$libc' (expected glibc or musl)"; fail=1
     ;;
 esac
 
