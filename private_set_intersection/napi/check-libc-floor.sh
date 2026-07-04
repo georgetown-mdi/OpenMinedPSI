@@ -48,7 +48,10 @@ fi
 
 case "$libc" in
   glibc)
-    hi=$(echo "$syms" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1)
+    # `|| true`: grep exits 1 when $syms carries no GLIBC_ line (a GLIBCXX_-only
+    # regression, already flagged above), which under `set -o pipefail` would
+    # abort the script before it prints its own verdict.
+    hi=$(echo "$syms" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1 || true)
     if [ -n "$hi" ] && [ "$(printf '%s\n%s\n' "$hi" "$max" | sort -V | tail -1)" != "$max" ]; then
       say "FAIL: requires GLIBC_$hi > floor $max"; fail=1
     else
@@ -56,10 +59,16 @@ case "$libc" in
     fi
     ;;
   musl)
+    # A correct zig musl build references no glibc versioned symbols AND links
+    # musl's libc.so, not glibc's versioned sonames. Check both: the versioned
+    # symbol scan alone would miss an unversioned glibc import (__libc_start_main
+    # and the like) on a mislabeled build.
     if echo "$syms" | grep -qE 'GLIBC_'; then
-      say "FAIL: musl build references glibc symbols: $(echo "$syms" | paste -sd, -)"; fail=1
+      say "FAIL: musl build references glibc versioned symbols: $(echo "$syms" | paste -sd, -)"; fail=1
+    elif echo "$needed" | grep -qE 'libc\.so\.6|libm\.so\.6|ld-linux'; then
+      say "FAIL: musl build links a glibc soname (NEEDED: $(echo "$needed" | paste -sd' ' -))"; fail=1
     else
-      say "OK: no glibc symbols"
+      say "OK: no glibc symbols or sonames"
     fi
     ;;
   *)

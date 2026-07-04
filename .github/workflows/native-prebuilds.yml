@@ -14,9 +14,11 @@
 # LINUX PORTABILITY. The Linux legs are cross-compiled with the hermetic zig cc
 # toolchain (hermetic_cc_toolchain, pinned in MODULE.bazel), NOT the runner's
 # system GCC. Two consequences:
-#   - the glibc floor is set by the zig SDK (the built addon needs only
-#     GLIBC_2.17), so it loads on Debian 12 / Ubuntu 22.04 / the node:26-bookworm
-#     dev container -- the runner's own glibc is irrelevant and not load-bearing;
+#   - the glibc legs target glibc 2.28 (the ceiling the symbol-scan gate
+#     enforces), set by the pinned zig SDK rather than the runner; in practice
+#     the addon references no symbol newer than GLIBC_2.17, so it loads on
+#     Debian 12 / Ubuntu 22.04 / the node:26-bookworm dev container and well
+#     below -- the runner's own glibc is irrelevant and not load-bearing;
 #   - zig can target musl, so there is an Alpine (node:*-alpine) prebuild too.
 # Both are byte-identical to the glibc build and to the WASM engine. The floor is
 # enforced by a symbol-scan gate (check-libc-floor.sh) per leg, so drift like the
@@ -251,7 +253,7 @@ jobs:
 
       - name: Load + run the addon in a ${{ matrix.libc }} container
         run: |
-          docker run --rm -v "$PWD/staging/${{ matrix.target }}:/p:ro" ${{ matrix.image }} \
+          docker run --rm -v "$PWD/staging/${{ matrix.target }}:/p:ro" "${{ matrix.image }}" \
             node -e "
               const addon = require('/p/node.napi.${{ matrix.libc }}.node');
               const s = addon.PsiServer.CreateWithNewKey(true);
