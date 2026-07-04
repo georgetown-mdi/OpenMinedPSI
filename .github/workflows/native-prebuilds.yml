@@ -33,19 +33,19 @@ jobs:
           - { os: ubuntu-24.04-arm, target: linux-arm64 }
           - { os: macos-14, target: darwin-arm64 }
           - { os: macos-13, target: darwin-x64 }
-          # Windows is the required-but-finicky target: the .node link must
-          # resolve the N-API symbols against Node's import library (node.lib).
-          # This job wires that up but is the one cell not yet verified on a
-          # real runner -- expect to iterate here.
+          # Windows is the finicky target: the .node link resolves N-API symbols
+          # against Node's import library (node.lib), and the transitive
+          # rules_swift toolchain probe needs a real Swift install even though
+          # nothing here uses Swift. Both are wired below.
           - { os: windows-latest, target: win32-x64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - uses: bazel-contrib/setup-bazel@0.15.0
+      - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
           disk-cache: napi-${{ matrix.target }}
@@ -63,6 +63,19 @@ jobs:
           fi
           echo "NODE_LIB=$node_lib" >> "$GITHUB_ENV"
           echo "resolved node.lib: $node_lib"
+
+      - name: Set up Swift (Windows)
+        # rules_swift is pulled in transitively (by protobuf) and its Windows
+        # toolchain autoconfiguration hard-fails when no Swift compiler is on
+        # PATH -- it needs swiftc, SDKROOT, and the SDK's Info.plist. This addon
+        # is pure C++ and never invokes Swift (Linux degrades quietly; only the
+        # Windows path is strict), so install a real toolchain purely to satisfy
+        # the probe.
+        if: runner.os == 'Windows'
+        uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5 # v0.4.0
+        with:
+          swift-version: swift-6.3.3-release
+          swift-build: 6.3.3-RELEASE
 
       - name: Build addon
         run: |
@@ -96,7 +109,7 @@ jobs:
           cp bazel-bin/private_set_intersection/napi/psi_native.node \
             "staging/${{ matrix.target }}/node.napi.node"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: prebuild-${{ matrix.target }}
           path: staging/
@@ -107,13 +120,13 @@ jobs:
     needs: build-addon
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - uses: bazel-contrib/setup-bazel@0.15.0
+      - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
           disk-cache: napi-package
@@ -123,7 +136,7 @@ jobs:
         run: npm ci
 
       - name: Gather prebuilds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: prebuild-*
           path: prebuilds-dist
@@ -134,7 +147,7 @@ jobs:
           bash private_set_intersection/javascript/scripts/assemble-native-package.sh \
             "$GITHUB_WORKSPACE/prebuilds-dist"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openmined-psi-tarball
           path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
