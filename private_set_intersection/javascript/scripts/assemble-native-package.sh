@@ -28,6 +28,14 @@ cp -f "bazel-bin/$R/cpp/psi_wasm_node.js/wasm_node.js" "$R/bin/psi_wasm_node.js"
 cp -f "bazel-bin/$R/cpp/psi_wasm_web.js/wasm_web.js" "$R/bin/psi_wasm_web.js"
 cp -f "bazel-bin/$R/cpp/psi_wasm_worker.js/wasm_worker.js" "$R/bin/psi_wasm_worker.js"
 
+# Generate the protobuf bindings (psi_pb.js -> bin/, psi_pb.d.ts -> src/). They
+# are gitignored, so a clean checkout lacks them and rollup cannot resolve
+# ./proto/psi_pb. This script reimplements prerollup.sh but had skipped the step;
+# build-proto.sh needs the host protoc built first.
+echo "== generating protobuf bindings (psi_pb) =="
+bazel build -c opt --platforms="@local_config_platform//:host" @protobuf//:protoc
+bash "$R/scripts/build-proto.sh"
+
 echo "== rollup all bundles (incl. native) =="
 rm -rf "$R/dist"
 mkdir -p "$R/dist"
