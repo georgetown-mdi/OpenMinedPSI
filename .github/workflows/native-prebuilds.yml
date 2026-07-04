@@ -10,6 +10,15 @@
 # Node-API is ABI-stable, so one .node per (OS, arch) serves every supported
 # Node -- the addon is built against the runner's Node and loads on any Node
 # with the same N-API version.
+#
+# Job layout (three jobs, two of them fully parallel):
+#   build-addon   matrix, one native .node per (OS, arch)
+#   build-bundle  the arch-independent WASM/protoc/rollup dist/ tree; NO `needs`
+#                 so it runs alongside build-addon instead of behind it
+#   package       downloads both, folds the prebuilds in, and packs -- the cheap
+#                 tail that runs no compiler
+# Splitting build-bundle out is the big win: its ~7 min of platform-independent
+# work no longer serializes after the slow Windows addon build.
 
 name: Native prebuilds
 
@@ -52,8 +61,37 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          disk-cache: napi-${{ matrix.target }}
+          # setup-bazel skips re-saving a disk cache whenever it restores the
+          # exact key (BUILD-file hash) it would save under. An early failing
+          # Windows run once saved an empty ~225-byte D:/_bazel-disk (the runner
+          # roots the bazel output base on D:), and because the BUILD hash never
+          # changes, every later run restored that empty entry and skipped the
+          # save -- perpetuating a cold ~9-min build. The `-warm` suffix abandons
+          # the poisoned entry so the next run misses, builds cold once, and saves
+          # a real warm cache. This re-poisons only if a Windows run FAILS before
+          # the build populates the cache: setup-bazel's post step saves under
+          # post-if !cancelled(), so a failed cold run can seed an empty -warm
+          # entry that then sticks and Windows silently goes cold again (correct
+          # artifacts, just slow). If that happens, bump the suffix to recover.
+          # Non-Windows caches were healthy, so they keep their keys.
+          disk-cache: napi-${{ matrix.target }}${{ runner.os == 'Windows' && '-warm' || '' }}
           repository-cache: true
+
+      - name: Resolve Node version (Windows)
+        # Key the node-gyp header cache on the exact Node version node.lib is
+        # cut for; setup-node@v6 with node-version:22 tracks the latest 22.x.
+        if: runner.os == 'Windows'
+        id: node_ver
+        run: echo "version=$(node --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache node-gyp headers (Windows)
+        # `node-gyp install` downloads Node's headers + node.lib (~1.5 min cold)
+        # into this dir; caching it makes the fetch below a no-op on a warm run.
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/node-gyp/Cache
+          key: node-gyp-${{ runner.os }}-${{ steps.node_ver.outputs.version }}
 
       - name: Fetch Node import library (Windows)
         if: runner.os == 'Windows'
@@ -74,12 +112,15 @@ jobs:
         # PATH -- it needs swiftc, SDKROOT, and the SDK's Info.plist. This addon
         # is pure C++ and never invokes Swift (Linux degrades quietly; only the
         # Windows path is strict), so install a real toolchain purely to satisfy
-        # the probe.
+        # the probe. `cache: true` caches the ~GB installer download (the safely
+        # cacheable part -- the MSI install itself sets registry/PATH state and
+        # must still run) so a warm run skips the ~2-min re-download.
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5 # v0.4.0
         with:
           swift-version: swift-6.3.3-release
           swift-build: 6.3.3-RELEASE
+          cache: true
 
       - name: Build addon
         run: |
@@ -134,9 +175,11 @@ jobs:
           path: staging/
           if-no-files-found: error
 
-  package:
-    name: gather + pack tarball
-    needs: build-addon
+  build-bundle:
+    name: build WASM + rollup bundle
+    # No `needs`: the arch-independent WASM/protoc/rollup work has no dependency
+    # on the native addons, so it runs in parallel with build-addon instead of
+    # after it. package waits on both.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -148,11 +191,44 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          disk-cache: napi-package
+          # A fresh dedicated key. This cache holds the host protoc (and the
+          # emscripten/WASM outputs), so protoc is built from scratch only on the
+          # first run and restored warm afterwards -- it is no longer rebuilt in
+          # the package tail every run. Distinct from every build-addon key, so
+          # the concurrent Linux addon leg cannot race its save.
+          disk-cache: napi-bundle
           repository-cache: true
 
       - name: Install JS toolchain (rollup + plugins)
         run: npm ci
+
+      - name: Build arch-independent bundle (WASM + protoc + rollup)
+        run: bash private_set_intersection/javascript/scripts/build-bundle.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle-dist
+          # The dist/ tree, ready to pack once the prebuilds are folded in.
+          path: private_set_intersection/javascript/dist/
+          if-no-files-found: error
+
+  package:
+    name: gather + pack tarball
+    needs: [build-addon, build-bundle]
+    runs-on: ubuntu-24.04
+    steps:
+      # Checkout only supplies the pack script; this job runs no build.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download bundle (dist/)
+        uses: actions/download-artifact@v8
+        with:
+          name: bundle-dist
+          path: private_set_intersection/javascript/dist
 
       - name: Gather prebuilds
         uses: actions/download-artifact@v8
@@ -161,9 +237,9 @@ jobs:
           path: prebuilds-dist
           merge-multiple: true
 
-      - name: Assemble + pack (WASM + native prebuilds)
+      - name: Fold in prebuilds + pack
         run: |
-          bash private_set_intersection/javascript/scripts/assemble-native-package.sh \
+          bash private_set_intersection/javascript/scripts/pack-native-package.sh \
             "$GITHUB_WORKSPACE/prebuilds-dist"
 
       - uses: actions/upload-artifact@v7
