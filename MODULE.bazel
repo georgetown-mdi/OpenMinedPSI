@@ -29,6 +29,19 @@ bazel_dep(name = "rules_proto_grpc_python", version = "5.1.0")
 bazel_dep(name = "rules_python", version = "1.4.1")
 bazel_dep(name = "rules_rust", version = "0.53.0")
 
+# rules_swift is only pulled in transitively (by protobuf) and is never used
+# here, but its Windows swift-toolchain autoconfiguration emits an invalid BUILD
+# file (target_compatible_with = APPLE_PLATFORMS_CONSTRAINTS[arch], names defined
+# only on the Apple path), which breaks all toolchain resolution on Windows --
+# including the pure C++ native addon build. Patch the one offending line. See
+# patches/rules_swift_windows_toolchain.patch.
+single_version_override(
+    module_name = "rules_swift",
+    version = "2.4.0",
+    patch_strip = 1,
+    patches = ["//patches:rules_swift_windows_toolchain.patch"],
+)
+
 ## EMSDK
 emsdk_version = "4.0.10"
 bazel_dep(name = "emsdk", version = emsdk_version)

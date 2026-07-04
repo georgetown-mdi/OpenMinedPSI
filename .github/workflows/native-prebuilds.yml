@@ -32,7 +32,11 @@ jobs:
           - { os: ubuntu-24.04, target: linux-x64 }
           - { os: ubuntu-24.04-arm, target: linux-arm64 }
           - { os: macos-14, target: darwin-arm64 }
-          - { os: macos-13, target: darwin-x64 }
+          # darwin-x64 is cross-compiled on the arm64 runner (the macOS SDK is
+          # universal) rather than a native macos-13 Intel runner, which GitHub
+          # is deprecating and which queued for a runner indefinitely. The .node
+          # links with -undefined dynamic_lookup, so no import library is needed.
+          - { os: macos-14, target: darwin-x64, bazel_cpu: darwin_x86_64 }
           # Windows is the finicky target: the .node link resolves N-API symbols
           # against Node's import library (node.lib), and the transitive
           # rules_swift toolchain probe needs a real Swift install even though
@@ -79,6 +83,10 @@ jobs:
 
       - name: Build addon
         run: |
+          # matrix.bazel_cpu cross-compiles to another arch (darwin-x64 on the
+          # arm64 runner); empty for a native build.
+          cpu_flag=""
+          [ -n "${{ matrix.bazel_cpu }}" ] && cpu_flag="--cpu=${{ matrix.bazel_cpu }}"
           # No `eval`: the --linkopt value is passed as one double-quoted
           # argument, so $NODE_LIB still expands but a Windows path with spaces or
           # shell metacharacters is inert (word-splitting and globbing suppressed).
@@ -87,11 +95,15 @@ jobs:
             bazel build -c opt --config=napi "--linkopt=$NODE_LIB" \
               //private_set_intersection/napi:addon
           else
-            bazel build -c opt --strip=always --config=napi \
+            bazel build -c opt --strip=always --config=napi $cpu_flag \
               //private_set_intersection/napi:addon
           fi
 
       - name: Liveness check (loads + runs a real setup)
+        # Skip for a cross-compiled target: the runner cannot dlopen a .node
+        # built for another arch (an arm64 runner cannot load an x86_64 addon).
+        # The wire interop is already proven on darwin-arm64 from identical source.
+        if: ${{ !matrix.bazel_cpu }}
         run: |
           node -e "
             const addon = require('./bazel-bin/private_set_intersection/napi/psi_native.node');
