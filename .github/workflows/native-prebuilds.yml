@@ -95,8 +95,10 @@ jobs:
             # MSVC also needs /std:c++17 explicitly: the repo's Unix -std=c++17
             # cxxopt is ignored by cl.exe, which then defaults below C++17 and
             # trips abseil's version check. Host tools (protoc) need it too.
+            # protobuf 30.2 hard-errors on MSVC+Bazel unless protobuf_allow_msvc.
             bazel build -c opt --config=napi \
               --cxxopt=/std:c++17 --host_cxxopt=/std:c++17 \
+              --define=protobuf_allow_msvc=true \
               "--linkopt=$NODE_LIB" \
               //private_set_intersection/napi:addon
           else
