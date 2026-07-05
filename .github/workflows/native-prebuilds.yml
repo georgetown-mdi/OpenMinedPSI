@@ -113,7 +113,7 @@ jobs:
         # `node-gyp install` downloads Node's headers + node.lib (~1.5 min cold)
         # into this dir; caching it makes the fetch below a no-op on a warm run.
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/AppData/Local/node-gyp/Cache
           key: node-gyp-${{ runner.os }}-${{ steps.node_ver.outputs.version }}
