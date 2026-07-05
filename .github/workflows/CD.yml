@@ -13,6 +13,12 @@ on:
   release:
     types: [created]
 
+# Least privilege: the publish jobs authenticate to PyPI with a token in step env
+# (TWINE_PASSWORD), so GITHUB_TOKEN needs no write scope. Pin it read-only to limit
+# the blast radius of this release-triggered workflow that carries the PyPI secret.
+permissions:
+  contents: read
+
 jobs:
   Core:
     runs-on: ${{ matrix.os }}
@@ -20,7 +26,11 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # No job here does an authenticated git push; don't leave the token in
+          # the checkout's git config for a later step to read.
+          persist-credentials: false
       - name: Run tests nix
         timeout-minutes: 60
         run: .github/workflows/scripts/run_tests_core.sh
@@ -34,7 +44,11 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # No job here does an authenticated git push; don't leave the token in
+          # the checkout's git config for a later step to read.
+          persist-credentials: false
       - name: Run tests nix
         timeout-minutes: 60
         run: .github/workflows/scripts/run_tests_js.sh
@@ -47,10 +61,14 @@ jobs:
         # Bazel uses hermetic python, these are just placeholders
         python-version: ['3_9', '3_10', '3_11', '3_12', '3_13']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # No job here does an authenticated git push; don't leave the token in
+          # the checkout's git config for a later step to read.
+          persist-credentials: false
       # configuring python for bazel abi and platform repo rules
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - name: Python deps
@@ -69,13 +87,17 @@ jobs:
         golang-version: ['1.23']
     steps:
       - name: Set up Golang ${{ matrix.golang-version }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.golang-version }}
         id: go
       - name: Install Go dependencies
         run: go install golang.org/x/lint/golint@latest
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # No job here does an authenticated git push; don't leave the token in
+          # the checkout's git config for a later step to read.
+          persist-credentials: false
       - name: Run tests nix
         timeout-minutes: 30
         run: .github/workflows/scripts/run_tests_go.sh
@@ -88,7 +110,11 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # No job here does an authenticated git push; don't leave the token in
+          # the checkout's git config for a later step to read.
+          persist-credentials: false
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Run tests nix
@@ -104,9 +130,13 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
         os: [ubuntu-24.04, ubuntu-22.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # No job here does an authenticated git push; don't leave the token in
+          # the checkout's git config for a later step to read.
+          persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Build and publish the python wheel

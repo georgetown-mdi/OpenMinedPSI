@@ -1,6 +1,23 @@
-# There are many warnings that lead to errors on Clang and GCC (maybe even MSVC)
-# because of the compiler and version disparity, we're opting to eat the risk and silence all warnings
-build --cxxopt="-std=c++17" --copt="-w" --experimental_isolated_extension_usages
+# -w and -std=c++17 are Clang/GCC-style flags; we scope them to the Unix hosts via
+# --enable_platform_specific_config (which auto-applies build:linux / build:macos /
+# build:windows by host OS) instead of passing them globally, because both misbehave
+# under cl.exe:
+#   -w: warnings vary across Clang/GCC/MSVC and the version disparity can turn some
+#   into errors, so we silence them on Unix. Under cl.exe -w becomes /w, but abseil
+#   adds /W3 as a per-target copt (ABSL_MSVC_FLAGS) that Bazel places after our global
+#   copt, so /W3 wins -- defeating the suppression and emitting a D9025 ("overriding
+#   '/w' with '/W3'") on abseil units. Leaving Windows unflagged removes the /w, so
+#   there is no conflict and no D9025; the residual C-warnings (e.g. C4715 in
+#   protobuf's Objective-C codegen host tool) are cosmetic and the build succeeds. A
+#   global Windows /W0 would not help -- it just re-triggers D9025 against abseil's /W3.
+#   -std=c++17: cl.exe ignores the gcc-style spelling (emitting D9002) and needs
+#   /std:c++17, which the Windows build passes explicitly (see native-prebuilds.yml);
+#   keeping -std=c++17 off the Windows command line drops that per-unit D9002 noise
+#   without changing the standard actually compiled against.
+common --enable_platform_specific_config
+build --experimental_isolated_extension_usages
+build:linux --cxxopt="-std=c++17" --copt="-w"
+build:macos --cxxopt="-std=c++17" --copt="-w"
 
 build:wasm --incompatible_enable_cc_toolchain_resolution
 build:wasm --platforms=@emsdk//:platform_wasm
