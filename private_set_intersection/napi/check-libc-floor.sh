@@ -55,6 +55,30 @@ if ! echo "$exported" | grep -qx 'napi_register_module_v1'; then
   say "FAIL: does not export napi_register_module_v1 -- not a Node addon"; fail=1
 fi
 
+# ...and ONLY that, apart from the linker-synthesized section-boundary markers
+# __start_<sec>/__stop_<sec>. napi.lds binds every other symbol local (local: *),
+# so the addon's statically linked BoringSSL/libc++ can never interpose the host
+# process's OpenSSL/libstdc++. Any extra dynamic export -- e.g. the patched
+# OPENSSL_thread_stop, or an EVP_/EC_/RAND_ symbol -- means the version script
+# regressed and crypto symbols leaked into the process's global namespace.
+#
+# The __start_/__stop_ markers are not addon code: ld synthesizes them for any
+# object that iterates a named section (protobuf 30's `pb_defaults`
+# default-instance registry here). lld creates them AFTER version-script
+# assignment, so `local: *` never demotes them, and they cannot be hidden at the
+# link -- zig's driver rejects `-z start-stop-visibility=hidden` (see napi/BUILD).
+# They resolve to section-boundary addresses, not to any BoringSSL/libc++ symbol,
+# so they are not the crypto or C++-runtime leak this gate targets -- exclude
+# them here; every other extra export still fails it. Their visibility is printed
+# below for audit (lld defaults them to protected, which is non-interposable).
+markers=$(readelf --dyn-syms --wide "$f" \
+  | awk '$7 != "UND" && $8 ~ /^__(start|stop)_/ {print $8" ("$6")"}' | sort -u || true)
+[ -n "$markers" ] && say "note: linker section markers (excluded from the export gate): $(echo "$markers" | paste -sd, -)"
+extra=$(echo "$exported" | grep -vx 'napi_register_module_v1' | grep -vE '^__(start|stop)_' | grep -v '^$' || true)
+if [ -n "$extra" ]; then
+  say "FAIL: exports symbols beyond the N-API entry (version script regressed): $(echo "$extra" | paste -sd, -)"; fail=1
+fi
+
 # No dynamic C++ runtime -- three ways it could sneak in:
 #   (a) versioned libstdc++ symbols;
 if echo "$syms" | grep -qE 'GLIBCXX_|CXXABI_'; then

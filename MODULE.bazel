@@ -43,6 +43,21 @@ single_version_override(
     patches = ["//patches:rules_swift_windows_toolchain.patch"],
 )
 
+# BoringSSL has no public API to drain its per-thread state (error queue, RAND)
+# or unregister the pthread-key/TLS destructor that frees it at thread exit.
+# The native N-API addon needs one: at worker_threads teardown Node dlcloses
+# the addon while the worker's OS thread is still running, so the thread-exit
+# destructor would fire against unmapped code (SIGSEGV). The patch adds the
+# OpenSSL-compatible OPENSSL_thread_stop(), called by the addon from an env
+# cleanup hook (see private_set_intersection/napi/psi_napi.cpp and
+# patches/boringssl_openssl_thread_stop.patch).
+single_version_override(
+    module_name = "boringssl",
+    version = "0.20250514.0",
+    patch_strip = 1,
+    patches = ["//patches:boringssl_openssl_thread_stop.patch"],
+)
+
 ## Hermetic C/C++ (zig cc) toolchain -- used ONLY to cross-compile the native
 ## N-API addon (private_set_intersection/napi) into portable Linux prebuilds.
 ## The zig toolchain fixes the glibc/musl floor of the shipped .node:

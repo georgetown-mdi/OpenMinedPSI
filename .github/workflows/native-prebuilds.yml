@@ -348,6 +348,41 @@ jobs:
           bash private_set_intersection/javascript/scripts/pack-native-package.sh \
             "$GITHUB_WORKSPACE/prebuilds-dist"
 
+      - name: Validate worker-teardown safety
+        # HARD regression gate for the worker_threads teardown SIGSEGV the napi
+        # binding fixes (the OPENSSL_thread_stop drain in
+        # private_set_intersection/napi/psi_napi.cpp). Installs the freshly packed
+        # tarball exactly as a consumer does and drives the REAL native loader
+        # through worker load / crypto op / terminate across the crash matrix; a
+        # thread-exit destructor re-armed after the drain crashes the worker
+        # (exit 139), fails this step, and blocks the tarball artifact. Runs on the
+        # runner's glibc x64 -- the libc that actually unloads the addon (musl
+        # dlclose is a no-op; macOS and Windows differ), so it is where the crash
+        # can occur; the regression it guards lives in shared C++ and so surfaces
+        # here. Detection is best-effort only in that a teardown crash can be
+        # nondeterministic, so the harness stress-loops rather than proving absence.
+        # timeout-minutes bounds a hung worker (no per-case timeout in the harness)
+        # so it fails fast instead of riding the job's default timeout.
+        timeout-minutes: 10
+        run: |
+          set -- "$GITHUB_WORKSPACE"/private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+            echo "::error::expected exactly one packed tarball, found $#"
+            exit 1
+          fi
+          tarball="$1"
+          work="$(mktemp -d)"
+          cp "$GITHUB_WORKSPACE/worker-teardown-validation.mjs" "$work/"
+          # --ignore-scripts: this install is an unpinned resolution of the tarball's
+          # transitive deps from the registry; the harness only needs require-time
+          # resolution (node-gyp-build finds the bundled prebuild), so block any
+          # dependency lifecycle script from running in the release job.
+          ( cd "$work" \
+            && npm init -y >/dev/null \
+            && npm install --no-audit --no-fund --ignore-scripts "$tarball" >/dev/null \
+            && node worker-teardown-validation.mjs \
+                 ./node_modules/@openmined/psi.js/psi_native_node.js )
+
       - uses: actions/upload-artifact@v7
         with:
           name: openmined-psi-tarball

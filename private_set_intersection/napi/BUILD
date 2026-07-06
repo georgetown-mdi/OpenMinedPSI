@@ -55,6 +55,16 @@ cc_binary(
         # table and are never interposed by the host process's libstdc++ -- see
         # napi.lds. (zig cc's linker driver rejects --exclude-libs, but the
         # version script's local: * already achieves the same hiding.)
+        #
+        # The one export local: * cannot hide is the linker-SYNTHESIZED section
+        # marker pair __start_<sec>/__stop_<sec>: ld creates them after version
+        # assignment (protobuf 30's `pb_defaults` default-instance registry is
+        # the only such section here). They cannot be hidden at link either --
+        # zig's driver rejects `-z start-stop-visibility=hidden` the same way it
+        # rejects --exclude-libs (error: unsupported linker extension flag). They
+        # carry no crypto/libc++ meaning, so check-libc-floor.sh tolerates that
+        # specific marker class rather than the link forcing it hidden -- see the
+        # __start_/__stop_ handling there.
         "//conditions:default": [
             "-pthread",
             "-Wl,--version-script,$(location napi.lds)",
@@ -68,6 +78,10 @@ cc_binary(
         "//private_set_intersection/proto:psi_cc_proto",
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/status:statusor",
+        # Direct: psi_napi.cpp includes openssl/thread.h for OPENSSL_thread_stop
+        # (the worker-teardown drain). Otherwise reached only transitively via
+        # psi_client / psi_server, like the cpp/ libraries that include openssl/*.h.
+        "@boringssl//:crypto",
         "@node_addon_api",
     ],
 )
