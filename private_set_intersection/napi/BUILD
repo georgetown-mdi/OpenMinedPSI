@@ -68,6 +68,10 @@ cc_binary(
         "//private_set_intersection/proto:psi_cc_proto",
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/status:statusor",
+        # Direct: psi_napi.cpp includes openssl/thread.h for OPENSSL_thread_stop
+        # (the worker-teardown drain). Otherwise reached only transitively via
+        # psi_client / psi_server, like the cpp/ libraries that include openssl/*.h.
+        "@boringssl//:crypto",
         "@node_addon_api",
     ],
 )
