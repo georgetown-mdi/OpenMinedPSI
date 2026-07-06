@@ -42,6 +42,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "napi.h"
+#include "openssl/thread.h"
 #include "private_set_intersection/cpp/datastructure/datastructure.h"
 #include "private_set_intersection/cpp/package.h"
 #include "private_set_intersection/cpp/psi_client.h"
@@ -560,6 +561,24 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // its two constructor references) is not leaked if that call itself throws.
   env.SetInstanceData<AddonData>(data.get());
   data.release();
+
+  // Drain BoringSSL's per-thread crypto state at environment teardown, while
+  // the addon's code is still mapped. On first crypto use BoringSSL lazily
+  // registers a thread-exit destructor (a pthread-key / TLS-callback whose code
+  // lives in this addon) to free that thread's state (error queue, RAND). At
+  // worker_threads teardown Node dlcloses a worker-loaded addon BEFORE the
+  // worker's OS thread exits, so that destructor would fire against unmapped
+  // code -- SIGSEGV at worker.terminate() whenever a crypto op ran on the
+  // worker (freeing the wrapper via .delete() does not help; the thread-local
+  // is on a different axis). The main thread is unaffected: the addon is never
+  // unloaded there. OPENSSL_thread_stop() -- added to BoringSSL by
+  // patches/boringssl_openssl_thread_stop.patch, since upstream has no public
+  // drain API -- frees the state now and clears the thread-exit registration;
+  // this env cleanup hook runs it on the worker's own thread before the addon
+  // is unloaded. Enables running the native addon under worker_threads. See
+  // psilink board item 208035324 and worker-teardown-validation.mjs.
+  napi_add_env_cleanup_hook(
+      env, [](void*) { ::OPENSSL_thread_stop(); }, nullptr);
 
   exports.Set("PsiServer", PsiServerWrap::MakeFactory(env));
   exports.Set("PsiClient", PsiClientWrap::MakeFactory(env));

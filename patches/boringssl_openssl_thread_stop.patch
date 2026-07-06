@@ -1,0 +1,92 @@
+diff -ur a/crypto/thread_none.cc b/crypto/thread_none.cc
+--- a/crypto/thread_none.cc	2026-07-06 20:24:39.501999386 +0000
++++ b/crypto/thread_none.cc	2026-07-06 20:26:54.069993536 +0000
+@@ -48,4 +48,8 @@
+   return 1;
+ }
+ 
++// No thread-exit destructors exist in the single-threaded build (values are
++// process-global and |CRYPTO_set_thread_local| ignores the destructor), so
++// there is nothing to drain or unregister.
++void OPENSSL_thread_stop(void) {}
+ #endif  // !OPENSSL_THREADS
+diff -ur a/crypto/thread_pthread.cc b/crypto/thread_pthread.cc
+--- a/crypto/thread_pthread.cc	2026-07-06 20:24:39.500321877 +0000
++++ b/crypto/thread_pthread.cc	2026-07-06 20:26:54.049866345 +0000
+@@ -148,4 +148,20 @@
+   return 1;
+ }
+ 
++void OPENSSL_thread_stop(void) {
++  CRYPTO_once(&g_thread_local_init_once, thread_local_init);
++  if (!g_thread_local_key_created) {
++    return;
++  }
++  void *pointers = pthread_getspecific(g_thread_local_key);
++  if (pointers == NULL) {
++    return;
++  }
++  // Clear the slot first: pthread runs key destructors only for non-NULL
++  // values, so this both frees the state now and keeps |thread_local_destructor|
++  // from running again at thread exit.
++  pthread_setspecific(g_thread_local_key, NULL);
++  thread_local_destructor(pointers);
++}
++
+ #endif  // OPENSSL_PTHREADS
+diff -ur a/crypto/thread_win.cc b/crypto/thread_win.cc
+--- a/crypto/thread_win.cc	2026-07-06 20:24:39.501259298 +0000
++++ b/crypto/thread_win.cc	2026-07-06 20:26:54.060197442 +0000
+@@ -235,4 +235,32 @@
+   return 1;
+ }
+ 
++void OPENSSL_thread_stop(void) {
++  CRYPTO_once(&g_thread_local_init_once, thread_local_init);
++  if (g_thread_local_failed) {
++    return;
++  }
++  void **pointers = get_thread_locals();
++  if (pointers == NULL) {
++    return;
++  }
++  // Clear the slot first so the |DLL_THREAD_DETACH| callback (which frees only
++  // non-NULL values) does not run the destructors again at thread exit.
++  TlsSetValue(g_thread_local_key, NULL);
++
++  // Mirrors the |DLL_THREAD_DETACH| path of |thread_local_destructor|, which
++  // cannot be reused directly (it is an |NTAPI| module callback).
++  thread_local_destructor_t destructors[NUM_OPENSSL_THREAD_LOCALS];
++  AcquireSRWLockExclusive(&g_destructors_lock);
++  OPENSSL_memcpy(destructors, g_destructors, sizeof(destructors));
++  ReleaseSRWLockExclusive(&g_destructors_lock);
++
++  for (unsigned i = 0; i < NUM_OPENSSL_THREAD_LOCALS; i++) {
++    if (destructors[i] != NULL) {
++      destructors[i](pointers[i]);
++    }
++  }
++  free(pointers);
++}
++
+ #endif  // OPENSSL_WINDOWS_THREADS
+diff -ur a/include/openssl/thread.h b/include/openssl/thread.h
+--- a/include/openssl/thread.h	2026-07-06 20:24:39.497238110 +0000
++++ b/include/openssl/thread.h	2026-07-06 20:26:54.072300757 +0000
+@@ -117,6 +117,16 @@
+     struct CRYPTO_dynlock_value *l, const char *file, int line);
+ 
+ 
++// OPENSSL_thread_stop frees the error queue, RAND state, and any other
++// per-thread state BoringSSL maintains for the calling thread, and clears the
++// thread-exit registration that would otherwise free it when the thread
++// exits. Provided for OpenSSL compatibility: call it from a thread that has
++// used BoringSSL before the library could be unloaded out from under that
++// thread (e.g. a dlclose'd module on a still-running thread), so that no
++// thread-exit destructor fires against unmapped code. It is safe to use
++// BoringSSL on the thread afterwards; the state is lazily re-created.
++OPENSSL_EXPORT void OPENSSL_thread_stop(void);
++
+ #if defined(__cplusplus)
+ }  // extern C
+ #endif
