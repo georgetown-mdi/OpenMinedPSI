@@ -373,9 +373,13 @@ jobs:
           tarball="$1"
           work="$(mktemp -d)"
           cp "$GITHUB_WORKSPACE/worker-teardown-validation.mjs" "$work/"
+          # --ignore-scripts: this install is an unpinned resolution of the tarball's
+          # transitive deps from the registry; the harness only needs require-time
+          # resolution (node-gyp-build finds the bundled prebuild), so block any
+          # dependency lifecycle script from running in the release job.
           ( cd "$work" \
             && npm init -y >/dev/null \
-            && npm install --no-audit --no-fund "$tarball" >/dev/null \
+            && npm install --no-audit --no-fund --ignore-scripts "$tarball" >/dev/null \
             && node worker-teardown-validation.mjs \
                  ./node_modules/@openmined/psi.js/psi_native_node.js )
 
