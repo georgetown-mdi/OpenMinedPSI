@@ -55,6 +55,16 @@ if ! echo "$exported" | grep -qx 'napi_register_module_v1'; then
   say "FAIL: does not export napi_register_module_v1 -- not a Node addon"; fail=1
 fi
 
+# ...and ONLY that. napi.lds binds every other symbol local (local: *), so the
+# addon's statically linked BoringSSL/libc++ can never interpose the host
+# process's OpenSSL/libstdc++. Any extra dynamic export -- e.g. the patched
+# OPENSSL_thread_stop, or an EVP_/EC_/RAND_ symbol -- means the version script
+# regressed and crypto symbols leaked into the process's global namespace.
+extra=$(echo "$exported" | grep -vx 'napi_register_module_v1' | grep -v '^$' || true)
+if [ -n "$extra" ]; then
+  say "FAIL: exports symbols beyond the N-API entry (version script regressed): $(echo "$extra" | paste -sd, -)"; fail=1
+fi
+
 # No dynamic C++ runtime -- three ways it could sneak in:
 #   (a) versioned libstdc++ symbols;
 if echo "$syms" | grep -qE 'GLIBCXX_|CXXABI_'; then

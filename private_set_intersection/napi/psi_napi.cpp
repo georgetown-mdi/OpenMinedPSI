@@ -587,6 +587,16 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // touch its per-thread state -- which would re-arm the thread-exit destructor
   // after the drain. worker-teardown-validation.mjs is the regression guard on
   // that invariant (wired into the native-prebuilds workflow).
+  //
+  // Scope: this drains BoringSSL's per-thread state only. Abseil registers a
+  // second thread-exit destructor (its per-thread identity), but it stays dormant
+  // in shipped builds -- the path that arms it (a contended absl::Mutex under
+  // Abseil's DEBUG deadlock check, e.g. protobuf static init) is compiled out
+  // under -c opt / NDEBUG, which the prebuilds and the CI teardown gate use. A
+  // default `bazel build` (fastbuild) addon run under worker_threads crashes at
+  // teardown from that destructor regardless of this drain; a shipped build that
+  // enabled Abseil deadlock detection, or put a contended absl::Mutex on the
+  // worker's JS thread, would revive that crash class, uncovered here.
   napi_add_env_cleanup_hook(
       env, [](void*) { ::OPENSSL_thread_stop(); }, nullptr);
 
