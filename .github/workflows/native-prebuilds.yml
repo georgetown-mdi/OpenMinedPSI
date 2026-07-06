@@ -348,6 +348,28 @@ jobs:
           bash private_set_intersection/javascript/scripts/pack-native-package.sh \
             "$GITHUB_WORKSPACE/prebuilds-dist"
 
+      - name: Validate worker-teardown safety (best-effort)
+        # Best-effort regression gate for the worker_threads teardown SIGSEGV the
+        # napi binding fixes (the OPENSSL_thread_stop drain in
+        # private_set_intersection/napi/psi_napi.cpp). Installs the freshly packed
+        # tarball exactly as a consumer does and drives the REAL native loader
+        # through worker load / crypto op / terminate across the crash matrix; a
+        # thread-exit destructor re-armed after the drain crashes the worker
+        # (exit 139) and fails this step. Runs on the runner's glibc x64 -- the
+        # libc that actually unloads the addon (musl dlclose is a no-op; macOS and
+        # Windows differ), so it is where the crash can occur. Best-effort: a
+        # teardown crash can be nondeterministic, so the harness stress-loops
+        # rather than proving absence.
+        run: |
+          tarball=$(ls "$GITHUB_WORKSPACE"/private_set_intersection/javascript/dist/openmined-psi.js-*.tgz)
+          work="$(mktemp -d)"
+          cp "$GITHUB_WORKSPACE/worker-teardown-validation.mjs" "$work/"
+          ( cd "$work" \
+            && npm init -y >/dev/null \
+            && npm install --no-audit --no-fund "$tarball" >/dev/null \
+            && node worker-teardown-validation.mjs \
+                 ./node_modules/@openmined/psi.js/psi_native_node.js )
+
       - uses: actions/upload-artifact@v7
         with:
           name: openmined-psi-tarball

@@ -577,6 +577,16 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // this env cleanup hook runs it on the worker's own thread before the addon
   // is unloaded. Enables running the native addon under worker_threads. See
   // psilink board item 208035324 and worker-teardown-validation.mjs.
+  //
+  // Keep this in an env cleanup hook; do NOT relocate it into the
+  // SetInstanceData finalizer to make it "run last". Node finalizes instance
+  // data interleaved with the ObjectWrap finalizers, not strictly after them
+  // (nodejs/node 08e09eca34), and no N-API hook is guaranteed to run after those
+  // finalizers. This drain is therefore last-touch only because the wrap /
+  // PsiServer / PsiClient destructors merely free BoringSSL objects and never
+  // touch its per-thread state -- which would re-arm the thread-exit destructor
+  // after the drain. worker-teardown-validation.mjs is the regression guard on
+  // that invariant (wired into the native-prebuilds workflow).
   napi_add_env_cleanup_hook(
       env, [](void*) { ::OPENSSL_thread_stop(); }, nullptr);
 
