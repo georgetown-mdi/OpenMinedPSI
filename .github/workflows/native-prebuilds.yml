@@ -38,8 +38,11 @@ name: Native prebuilds
 on:
   workflow_dispatch: {}
 
-# Least privilege: this workflow only builds and uploads artifacts (a
-# runtime-scoped Actions API, not the GITHUB_TOKEN), so it needs no write scope.
+# Least privilege by default: the build and validate jobs only read the
+# repository and exchange artifacts (a runtime-scoped Actions API, not the
+# GITHUB_TOKEN), so they need no write scope. The `package` job raises exactly
+# the two scopes signing an attestation requires, and raises them there rather
+# than here so nothing else in the workflow runs with them.
 permissions:
   contents: read
 
@@ -322,6 +325,14 @@ jobs:
     name: gather + pack tarball
     needs: [build-addon, validate-linux, build-bundle]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # The OIDC token Sigstore's Fulcio issues this job's signing certificate
+      # against. Keyless: no signing key is stored, rotated, or read anywhere.
+      id-token: write
+      # actions/attest-build-provenance's write to this repository's attestation
+      # store, which is where a downstream consumer reads the claim from.
+      attestations: write
     steps:
       # Checkout only supplies the pack script; this job runs no build.
       - uses: actions/checkout@v7
@@ -382,6 +393,23 @@ jobs:
             && npm install --no-audit --no-fund --ignore-scripts "$tarball" >/dev/null \
             && node worker-teardown-validation.mjs \
                  ./node_modules/@openmined/psi.js/psi_native_node.js )
+
+      - name: Attest build provenance
+        # Binds the packed tarball's sha256 to this workflow run -- repository,
+        # workflow path, ref, and commit -- as a Sigstore-signed SLSA provenance
+        # statement stored against THIS repository's attestation store. That is
+        # the point: the claim lives outside any consumer's commit, so a
+        # consumer that vendors the tarball can verify where the bytes came from
+        # without trusting its own copy of them. Downstream (psilink) reads it
+        # with `gh attestation verify --repo <this repo> --signer-workflow
+        # <this workflow> --source-digest <this commit>`.
+        #
+        # Placed ahead of the upload so an artifact is only published once its
+        # provenance was signed, matching how the worker-teardown gate above
+        # blocks the artifact rather than annotating it.
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
 
       - uses: actions/upload-artifact@v7
         with:
