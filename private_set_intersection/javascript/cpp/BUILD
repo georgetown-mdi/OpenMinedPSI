@@ -34,6 +34,29 @@ WORKER_LINKOPTS = [
     "-s ENVIRONMENT=worker",
 ]
 
+# Evaluation-only pthreads variant (not shipped, not in build-psi-wasm.sh).
+# Build with --config=wasm --config=wasm_threads so every translation unit is
+# compiled with -pthread -DPSI_ENABLE_THREADS; add --config=wasm_simd_threads
+# instead for the SIMD+threads variant. The pool must hold at least
+# hardware_concurrency - 1 workers: parallel_ec.cpp spawns up to that many from
+# a synchronous call, which cannot wait for a new worker to load.
+THREADS_EMSCRIPTEN_LINKOPTS = [
+    opt
+    for opt in DEFAULT_EMSCRIPTEN_LINKOPTS
+    if opt != "-s USE_PTHREADS=0"
+] + [
+    "-pthread",
+    "-s PTHREAD_POOL_SIZE=navigator.hardwareConcurrency",
+    "-s PROXY_TO_PTHREAD=0",
+]
+
+# emcc requires a threaded build's ENVIRONMENT to include worker, where the
+# pthreads run.
+THREADS_WEB_LINKOPTS = [
+    "-s EXPORT_ES6=1",
+    "-s ENVIRONMENT=web,webview,worker",
+]
+
 # psi server + client build
 cc_binary(
     name = "wasm_node.js",
@@ -102,6 +125,75 @@ wasm_cc_binary(
 wasm_cc_binary(
     name = "psi_wasm_worker.js",
     cc_target = ":wasm_worker.js",
+)
+
+cc_binary(
+    name = "wasm_node_threads.js",
+    srcs = [
+        "client.cpp",
+        "data_structure.cpp",
+        "package.cpp",
+        "server.cpp",
+        "utils.h",
+    ],
+    linkopts = THREADS_EMSCRIPTEN_LINKOPTS + NODE_LINKOPTS,
+    visibility = ["//visibility:private"],
+    deps = [
+        "//private_set_intersection/cpp:package",
+        "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_server",
+    ],
+)
+
+wasm_cc_binary(
+    name = "psi_wasm_node_threads.js",
+    cc_target = ":wasm_node_threads.js",
+)
+
+cc_binary(
+    name = "wasm_web_threads.js",
+    srcs = [
+        "client.cpp",
+        "data_structure.cpp",
+        "package.cpp",
+        "server.cpp",
+        "utils.h",
+    ],
+    linkopts = THREADS_EMSCRIPTEN_LINKOPTS + THREADS_WEB_LINKOPTS,
+    visibility = ["//visibility:private"],
+    deps = [
+        "//private_set_intersection/cpp:package",
+        "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_server",
+    ],
+)
+
+wasm_cc_binary(
+    name = "psi_wasm_web_threads.js",
+    cc_target = ":wasm_web_threads.js",
+)
+
+cc_binary(
+    name = "wasm_worker_threads.js",
+    srcs = [
+        "client.cpp",
+        "data_structure.cpp",
+        "package.cpp",
+        "server.cpp",
+        "utils.h",
+    ],
+    linkopts = THREADS_EMSCRIPTEN_LINKOPTS + WORKER_LINKOPTS,
+    visibility = ["//visibility:private"],
+    deps = [
+        "//private_set_intersection/cpp:package",
+        "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_server",
+    ],
+)
+
+wasm_cc_binary(
+    name = "psi_wasm_worker_threads.js",
+    cc_target = ":wasm_worker_threads.js",
 )
 
 # Benchmark

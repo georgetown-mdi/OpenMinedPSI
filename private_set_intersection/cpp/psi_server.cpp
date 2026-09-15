@@ -109,7 +109,7 @@ StatusOr<psi_proto::ServerSetup> PsiServer::CreateSetupMessage(
   double corrected_fpr = fpr / num_client_inputs;
   ResetProgress(progress);
   std::vector<std::string> encrypted;
-#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+#if defined(PSI_ENABLE_THREADS)
   if (absl::Status status =
           EncryptElements(ec_cipher_.get(), inputs, &encrypted, progress);
       !status.ok()) {
@@ -188,7 +188,7 @@ StatusOr<psi_proto::Response> PsiServer::ProcessRequest(
 
   // Re-encrypt the request's elements and add to the response
   ResetProgress(progress);
-#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+#if defined(PSI_ENABLE_THREADS)
   std::vector<std::string> request_elements(encrypted_elements.begin(),
                                             encrypted_elements.end());
   std::vector<std::string> reencrypted;

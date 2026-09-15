@@ -16,11 +16,12 @@
 
 #include "private_set_intersection/cpp/parallel_ec.h"
 
-// The threaded implementation exists only for native builds that opt in via
-// PSI_ENABLE_THREADS. Under emscripten (WASM, built with USE_PTHREADS=0) this
-// translation unit is intentionally empty and the single-threaded loops in
+// The threaded implementation exists only for builds that opt in via
+// PSI_ENABLE_THREADS: the native prebuilds, and WASM builds compiled with
+// -pthread. The shipped WASM build (USE_PTHREADS=0) does not define it, so this
+// translation unit is empty there and the single-threaded loops in
 // psi_server.cpp / psi_client.cpp are used instead.
-#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+#if defined(PSI_ENABLE_THREADS)
 
 #include <algorithm>
 #include <cstddef>
@@ -30,6 +31,7 @@
 #include <thread>
 #include <utility>
 
+#include "absl/base/config.h"
 #include "absl/status/statusor.h"
 #include "openssl/mem.h"
 #include "openssl/obj_mac.h"
@@ -63,6 +65,22 @@ std::size_t ChooseThreadCount(std::size_t n) {
   const std::size_t hw = hardware == 0 ? 1 : static_cast<std::size_t>(hardware);
   const std::size_t by_work = n / kMinInputsPerThread;
   return std::max<std::size_t>(1, std::min<std::size_t>(hw, by_work));
+}
+
+// Runs `fn` and reports whether it returned normally. With exceptions disabled
+// (the emscripten build) a throw aborts instead, so there is nothing to catch.
+template <typename Fn>
+bool RunCatchingExceptions(Fn&& fn) {
+#ifdef ABSL_HAVE_EXCEPTIONS
+  try {
+    fn();
+  } catch (...) {
+    return false;
+  }
+#else
+  fn();
+#endif
+  return true;
 }
 
 using ElementOp = std::function<absl::StatusOr<std::string>(
@@ -123,7 +141,7 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
     // Convert any exception (e.g. std::bad_alloc constructing a result string)
     // into a shard error: escaping a worker thread it would std::terminate, and
     // escaping the calling thread it would unwind past the join below.
-    try {
+    const bool returned = RunCatchingExceptions([&] {
       ECCommutativeCipher* cipher = primary;
       std::unique_ptr<ECCommutativeCipher> owned;
       if (t != 0) {
@@ -148,7 +166,8 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
         (*outputs)[i] = *std::move(encrypted);
         counter.Increment();
       }
-    } catch (...) {
+    });
+    if (!returned) {
       shard_status[t] =
           absl::ResourceExhaustedError("elliptic-curve shard failed");
     }
@@ -157,17 +176,16 @@ absl::Status TransformElements(ECCommutativeCipher* primary,
   std::vector<std::thread> threads;
   threads.reserve(num_threads - 1);
   std::size_t next_shard = 1;
-  try {
+  // std::thread construction can fail (e.g. EAGAIN under thread pressure).
+  // Run the shards that could not be spawned on the calling thread below,
+  // rather than letting the already-spawned joinable threads reach
+  // std::terminate as the vector unwinds. The result is identical, just less
+  // parallel. Without exceptions the failed construction aborts instead.
+  RunCatchingExceptions([&] {
     for (; next_shard < num_threads; ++next_shard) {
       threads.emplace_back(run_shard, next_shard);
     }
-  } catch (...) {
-    // std::thread construction can fail (e.g. EAGAIN under thread pressure).
-    // Run the shards that could not be spawned on the calling thread below,
-    // rather than letting the already-spawned joinable threads reach
-    // std::terminate as the vector unwinds. The result is identical, just less
-    // parallel.
-  }
+  });
   run_shard(0);  // the calling thread owns shard 0
   for (std::size_t t = next_shard; t < num_threads; ++t) {
     run_shard(t);  // any shards that were not spawned above
@@ -220,4 +238,4 @@ absl::Status DecryptElements(ECCommutativeCipher* primary,
 
 }  // namespace private_set_intersection
 
-#endif  // PSI_ENABLE_THREADS && !__EMSCRIPTEN__
+#endif  // PSI_ENABLE_THREADS

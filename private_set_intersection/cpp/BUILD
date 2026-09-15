@@ -65,15 +65,16 @@ cc_test(
 
 # Parallel per-element EC transforms used by the native (non-WASM) builds. The
 # threaded code is compiled only when PSI_ENABLE_THREADS is defined (the native
-# prebuild build passes --copt=-DPSI_ENABLE_THREADS); under emscripten the
-# translation unit is empty and psi_server/psi_client use their inline
-# single-threaded loops.
+# prebuild build passes --copt=-DPSI_ENABLE_THREADS, and so does the unshipped
+# --config=wasm_threads build); otherwise the translation unit is empty and
+# psi_server/psi_client use their inline single-threaded loops.
 cc_library(
     name = "parallel_ec",
     srcs = ["parallel_ec.cpp"],
     hdrs = ["parallel_ec.h"],
     deps = [
         ":progress",
+        "@abseil-cpp//absl/base:config",
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/status:statusor",
         "@abseil-cpp//absl/types:span",

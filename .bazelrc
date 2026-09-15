@@ -33,3 +33,15 @@ build:wasm --platforms=@emsdk//:platform_wasm
 # host but is not what ships; see .github/workflows/native-prebuilds.yml for the
 # exact per-leg command.
 build:napi --copt=-DPSI_ENABLE_THREADS
+
+# Unshipped WASM evaluation variants; the shipped build uses --config=wasm alone.
+# Each sets its own --platform_suffix so the variants do not overwrite each
+# other's outputs. wasm_threads pairs with the *_threads targets in
+# private_set_intersection/javascript/cpp/BUILD; wasm_simd applies to either
+# target set.
+build:wasm_threads --copt=-pthread --copt=-DPSI_ENABLE_THREADS
+build:wasm_threads --platform_suffix=threads
+build:wasm_simd --copt=-msimd128 --linkopt=-msimd128
+build:wasm_simd --platform_suffix=simd
+build:wasm_simd_threads --config=wasm_threads --config=wasm_simd
+build:wasm_simd_threads --platform_suffix=simd-threads

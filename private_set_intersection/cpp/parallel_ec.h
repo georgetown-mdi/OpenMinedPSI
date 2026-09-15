@@ -25,6 +25,12 @@
 #include "absl/types/span.h"
 #include "private_join_and_compute/crypto/ec_commutative_cipher.h"
 
+// std::thread under emscripten without -pthread compiles but fails at runtime.
+#if defined(PSI_ENABLE_THREADS) && defined(__EMSCRIPTEN__) && \
+    !defined(__EMSCRIPTEN_PTHREADS__)
+#error "PSI_ENABLE_THREADS under emscripten requires compiling with -pthread"
+#endif
+
 namespace private_set_intersection {
 
 // Parallel per-element elliptic-curve transforms for the native (non-WASM)
@@ -45,8 +51,9 @@ namespace private_set_intersection {
 // `primary` on the calling thread.
 //
 // These are compiled and called only under PSI_ENABLE_THREADS (set for the
-// native prebuild build); the WASM build keeps the original single-threaded
-// loops and never references these symbols.
+// native prebuild build and the --config=wasm_threads evaluation build); the
+// shipped WASM build keeps the original single-threaded loops and never
+// references these symbols.
 //
 // `progress`, when non-null, is a caller-owned int32 slot into which the
 // running count of processed elements is published (see progress.h). Each shard

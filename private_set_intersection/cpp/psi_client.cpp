@@ -103,7 +103,7 @@ StatusOr<psi_proto::Request> PsiClient::CreateRequest(
   [[maybe_unused]] int64_t input_size = static_cast<int64_t>(inputs.size());
   ResetProgress(progress);
   std::vector<std::string> encrypted_inputs;
-#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+#if defined(PSI_ENABLE_THREADS)
   if (absl::Status status = EncryptElements(ec_cipher_.get(), inputs,
                                             &encrypted_inputs, progress);
       !status.ok()) {
@@ -217,7 +217,7 @@ StatusOr<std::vector<int64_t>> PsiClient::ProcessResponse(
   const auto& response_array = server_response.encrypted_elements();
   ResetProgress(progress);
   std::vector<std::string> decrypted;
-#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+#if defined(PSI_ENABLE_THREADS)
   std::vector<std::string> response_elements(response_array.begin(),
                                              response_array.end());
   if (absl::Status status = DecryptElements(ec_cipher_.get(), response_elements,
@@ -286,7 +286,7 @@ PsiClient::ProcessResponseForAssociationTable(
   const auto& response_array = server_response.encrypted_elements();
   ResetProgress(progress);
   std::vector<std::string> decrypted;
-#if defined(PSI_ENABLE_THREADS) && !defined(__EMSCRIPTEN__)
+#if defined(PSI_ENABLE_THREADS)
   std::vector<std::string> response_elements(response_array.begin(),
                                              response_array.end());
   if (absl::Status status = DecryptElements(ec_cipher_.get(), response_elements,

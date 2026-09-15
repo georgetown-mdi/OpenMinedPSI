@@ -113,6 +113,16 @@ emscripten_cache.targets(targets = [
     "libsockets",
     "libstubs",
     "crtbegin",
+    # Multithreaded variants for the unshipped --config=wasm_threads targets.
+    "libGL-mt-getprocaddr",
+    "libc-mt",
+    "libc++-mt-noexcept",
+    "libc++abi-mt-noexcept",
+    "libcompiler_rt-mt",
+    "libembind-mt-rtti",
+    "libemmalloc-mt",
+    "libprintf_long_double-mt",
+    "libsockets-mt",
 ])
 
 ## PCJ
