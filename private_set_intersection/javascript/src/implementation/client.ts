@@ -1,6 +1,7 @@
 import * as psi from 'psi_'
 import { Loader } from '../main/loader'
 import { ERROR_INSTANCE_DELETED } from './constants'
+import { Match, MatchConstructor } from './match'
 import { Request, Response, ServerSetup } from './proto/psi_pb'
 
 export type Client = {
@@ -18,6 +19,7 @@ export type Client = {
     serverSetup: ServerSetup,
     serverResponse: Response
   ) => number
+  readonly createMatch: () => Match
   readonly getPrivateKeyBytes: () => Uint8Array
 }
 
@@ -163,6 +165,30 @@ const ClientConstructor = (instance: psi.Client): Client => {
         throw new Error(Status.Message)
       }
       return Value
+    },
+
+    /**
+     * Starts a match of a Raw server setup against the server's response,
+     * each fed as serialized bytes in pieces cut anywhere. Unlike
+     * `getAssociationTable` and `getIntersectionSize`, it never holds either
+     * message as a parsed protobuf and decrypts each response element once.
+     * The match records the association table only if this client reveals
+     * the intersection. It holds its own copy of the key, so it may outlive
+     * this client; call its `delete` when done.
+     *
+     * @function
+     * @name Client#createMatch
+     * @returns {Match} A Match instance
+     */
+    createMatch(): Match {
+      if (!_instance) {
+        throw new Error(ERROR_INSTANCE_DELETED)
+      }
+      const { Value, Status } = _instance.CreateMatch()
+      if (Status) {
+        throw new Error(Status.Message)
+      }
+      return MatchConstructor(Value)
     },
 
     /**

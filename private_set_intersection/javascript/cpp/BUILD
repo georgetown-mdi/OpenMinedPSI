@@ -49,6 +49,7 @@ cc_binary(
     deps = [
         "//private_set_intersection/cpp:package",
         "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_match",
         "//private_set_intersection/cpp:psi_server",
     ],
 )
@@ -67,6 +68,7 @@ cc_binary(
     deps = [
         "//private_set_intersection/cpp:package",
         "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_match",
         "//private_set_intersection/cpp:psi_server",
     ],
 )
@@ -85,6 +87,7 @@ cc_binary(
     deps = [
         "//private_set_intersection/cpp:package",
         "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_match",
         "//private_set_intersection/cpp:psi_server",
     ],
 )
@@ -112,6 +115,7 @@ cc_binary(
     visibility = ["//visibility:private"],
     deps = [
         "//private_set_intersection/cpp:psi_client",
+        "//private_set_intersection/cpp:psi_match",
         "//private_set_intersection/cpp:psi_server",
         "@google_benchmark//:benchmark_main",
     ],

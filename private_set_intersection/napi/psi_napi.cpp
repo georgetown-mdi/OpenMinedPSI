@@ -41,11 +41,13 @@
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "napi.h"
 #include "openssl/thread.h"
 #include "private_set_intersection/cpp/datastructure/datastructure.h"
 #include "private_set_intersection/cpp/package.h"
 #include "private_set_intersection/cpp/psi_client.h"
+#include "private_set_intersection/cpp/psi_match.h"
 #include "private_set_intersection/cpp/psi_server.h"
 #include "private_set_intersection/proto/psi.pb.h"
 
@@ -54,6 +56,8 @@ namespace {
 using ::private_set_intersection::DataStructure;
 using ::private_set_intersection::Package;
 using ::private_set_intersection::PsiClient;
+using ::private_set_intersection::PsiMatch;
+using ::private_set_intersection::PsiMatchResult;
 using ::private_set_intersection::PsiServer;
 
 // ---------------------------------------------------------------------------
@@ -123,6 +127,28 @@ std::string ToByteString(const Napi::Value& value) {
                      array.ByteLength());
 }
 
+// The bytes of a Uint8Array argument, read in place: the array stays alive and
+// unmoved for the synchronous call. Anything else is refused.
+absl::StatusOr<absl::string_view> ByteView(const Napi::Value& value) {
+  if (!value.IsTypedArray() ||
+      value.As<Napi::TypedArray>().TypedArrayType() != napi_uint8_array) {
+    return absl::InvalidArgumentError("expected a Uint8Array");
+  }
+  Napi::Uint8Array array = value.As<Napi::Uint8Array>();
+  return absl::string_view(reinterpret_cast<const char*>(array.Data()),
+                           array.ByteLength());
+}
+
+// A fresh Uint32Array holding `values`.
+Napi::Uint32Array ToUint32Array(Napi::Env env,
+                                const std::vector<uint32_t>& values) {
+  Napi::Uint32Array out = Napi::Uint32Array::New(env, values.size());
+  if (!values.empty()) {
+    std::memcpy(out.Data(), values.data(), values.size() * sizeof(uint32_t));
+  }
+  return out;
+}
+
 template <typename T>
 Napi::Array ToNumberArray(Napi::Env env, const std::vector<T>& values) {
   Napi::Array out = Napi::Array::New(env, values.size());
@@ -174,10 +200,12 @@ bool ThrowIfDeleted(Napi::Env env, const void* instance, const char* what) {
 
 class PsiServerWrap;
 class PsiClientWrap;
+class PsiMatchWrap;
 
 struct AddonData {
   Napi::FunctionReference server_ctor;
   Napi::FunctionReference client_ctor;
+  Napi::FunctionReference match_ctor;
 };
 
 // ---------------------------------------------------------------------------
@@ -370,6 +398,7 @@ class PsiClientWrap : public Napi::ObjectWrap<PsiClientWrap> {
   Napi::Value GetIntersection(const Napi::CallbackInfo& info);
   Napi::Value GetAssociationTable(const Napi::CallbackInfo& info);
   Napi::Value GetIntersectionSize(const Napi::CallbackInfo& info);
+  Napi::Value CreateMatch(const Napi::CallbackInfo& info);
   Napi::Value GetPrivateKeyBytes(const Napi::CallbackInfo& info);
   Napi::Value Delete(const Napi::CallbackInfo& info);
 
@@ -393,6 +422,7 @@ Napi::Function PsiClientWrap::DefineConstructor(Napi::Env env) {
                          &PsiClientWrap::GetAssociationTable),
           InstanceMethod("GetIntersectionSize",
                          &PsiClientWrap::GetIntersectionSize),
+          InstanceMethod("CreateMatch", &PsiClientWrap::CreateMatch),
           InstanceMethod("GetPrivateKeyBytes",
                          &PsiClientWrap::GetPrivateKeyBytes),
           InstanceMethod("delete", &PsiClientWrap::Delete),
@@ -538,6 +568,127 @@ Napi::Value PsiClientWrap::GetIntersectionSize(const Napi::CallbackInfo& info) {
   return MakeOk(env, Napi::Number::New(env, static_cast<double>(*size)));
 }
 
+// ---------------------------------------------------------------------------
+// PsiMatchWrap
+// ---------------------------------------------------------------------------
+
+class PsiMatchWrap : public Napi::ObjectWrap<PsiMatchWrap> {
+ public:
+  static Napi::Function DefineConstructor(Napi::Env env);
+  static Napi::Value Wrap(Napi::Env env,
+                          absl::StatusOr<std::unique_ptr<PsiMatch>> match);
+
+  explicit PsiMatchWrap(const Napi::CallbackInfo& info);
+
+ private:
+  Napi::Value AddSetupBytes(const Napi::CallbackInfo& info);
+  Napi::Value SealSetup(const Napi::CallbackInfo& info);
+  Napi::Value MatchResponsePiece(const Napi::CallbackInfo& info);
+  Napi::Value Finish(const Napi::CallbackInfo& info);
+  Napi::Value Delete(const Napi::CallbackInfo& info);
+
+  // { Value: null, Status } for a call that returns only a status.
+  static Napi::Value StatusOnly(Napi::Env env, const absl::Status& status) {
+    return status.ok() ? MakeOk(env, env.Null()) : MakeError(env, status);
+  }
+
+  std::unique_ptr<PsiMatch> match_;
+};
+
+Napi::Function PsiMatchWrap::DefineConstructor(Napi::Env env) {
+  return DefineClass(
+      env, "PsiMatch",
+      {
+          InstanceMethod("AddSetupBytes", &PsiMatchWrap::AddSetupBytes),
+          InstanceMethod("SealSetup", &PsiMatchWrap::SealSetup),
+          InstanceMethod("MatchResponsePiece",
+                         &PsiMatchWrap::MatchResponsePiece),
+          InstanceMethod("Finish", &PsiMatchWrap::Finish),
+          InstanceMethod("delete", &PsiMatchWrap::Delete),
+      });
+}
+
+PsiMatchWrap::PsiMatchWrap(const Napi::CallbackInfo& info)
+    : Napi::ObjectWrap<PsiMatchWrap>(info) {
+  // See PsiServerWrap: move the instance out of the External's heap unique_ptr.
+  match_ = std::move(
+      *info[0].As<Napi::External<std::unique_ptr<PsiMatch>>>().Data());
+}
+
+Napi::Value PsiMatchWrap::Wrap(
+    Napi::Env env, absl::StatusOr<std::unique_ptr<PsiMatch>> match) {
+  if (!match.ok()) {
+    return MakeError(env, match.status());
+  }
+  AddonData* data = env.GetInstanceData<AddonData>();
+  // See PsiServerWrap::Wrap.
+  auto owned = std::make_unique<std::unique_ptr<PsiMatch>>(std::move(*match));
+  Napi::External<std::unique_ptr<PsiMatch>> external =
+      Napi::External<std::unique_ptr<PsiMatch>>::New(
+          env, owned.get(),
+          [](Napi::Env, std::unique_ptr<PsiMatch>* held) { delete held; });
+  owned.release();  // the External's finalizer now owns it
+  Napi::Object instance = data->match_ctor.New({external});
+  return MakeOk(env, instance);
+}
+
+Napi::Value PsiMatchWrap::AddSetupBytes(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, match_.get(), "PsiMatch")) return env.Undefined();
+  absl::StatusOr<absl::string_view> bytes = ByteView(info[0]);
+  if (!bytes.ok()) return MakeError(env, bytes.status());
+  return StatusOnly(env, match_->AddSetupBytes(*bytes));
+}
+
+Napi::Value PsiMatchWrap::SealSetup(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, match_.get(), "PsiMatch")) return env.Undefined();
+  return StatusOnly(env, match_->SealSetup());
+}
+
+Napi::Value PsiMatchWrap::MatchResponsePiece(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, match_.get(), "PsiMatch")) return env.Undefined();
+  absl::StatusOr<absl::string_view> bytes = ByteView(info[0]);
+  if (!bytes.ok()) return MakeError(env, bytes.status());
+  return StatusOnly(env,
+                    match_->MatchResponsePiece(*bytes, ProgressSlot(info, 1)));
+}
+
+Napi::Value PsiMatchWrap::Finish(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, match_.get(), "PsiMatch")) return env.Undefined();
+  absl::StatusOr<PsiMatchResult> finished = match_->Finish();
+  if (!finished.ok()) return MakeError(env, finished.status());
+  Napi::Object value = Napi::Object::New(env);
+  value.Set(
+      "IntersectionSize",
+      Napi::Number::New(env, static_cast<double>(finished->intersection_size)));
+  value.Set(
+      "DecryptedCount",
+      Napi::Number::New(env, static_cast<double>(finished->decrypted_count)));
+  if (match_->reveal_intersection()) {
+    value.Set("ResponseIndices",
+              ToUint32Array(env, finished->response_indices));
+    value.Set("SetupIndices", ToUint32Array(env, finished->setup_indices));
+  } else {
+    value.Set("ResponseIndices", env.Null());
+    value.Set("SetupIndices", env.Null());
+  }
+  return MakeOk(env, value);
+}
+
+Napi::Value PsiMatchWrap::Delete(const Napi::CallbackInfo& info) {
+  match_.reset();
+  return info.Env().Undefined();
+}
+
+Napi::Value PsiClientWrap::CreateMatch(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
+  return PsiMatchWrap::Wrap(env, client_->CreateMatch());
+}
+
 Napi::Value PsiClientWrap::GetPrivateKeyBytes(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (ThrowIfDeleted(env, client_.get(), "PsiClient")) return env.Undefined();
@@ -557,8 +708,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   auto data = std::make_unique<AddonData>();
   data->server_ctor = Napi::Persistent(PsiServerWrap::DefineConstructor(env));
   data->client_ctor = Napi::Persistent(PsiClientWrap::DefineConstructor(env));
+  data->match_ctor = Napi::Persistent(PsiMatchWrap::DefineConstructor(env));
   // Release only once SetInstanceData has taken ownership, so AddonData (and
-  // its two constructor references) is not leaked if that call itself throws.
+  // its constructor references) is not leaked if that call itself throws.
   env.SetInstanceData<AddonData>(data.get());
   data.release();
 

@@ -83,6 +83,38 @@ cc_library(
 )
 
 cc_library(
+    name = "psi_match",
+    srcs = ["psi_match.cpp"],
+    hdrs = ["psi_match.h"],
+    deps = [
+        ":parallel_ec",
+        ":progress",
+        "@abseil-cpp//absl/memory",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@boringssl//:crypto",
+        "@private_join_and_compute//private_join_and_compute/crypto:ec_commutative_cipher",
+    ],
+)
+
+cc_test(
+    name = "psi_match_test",
+    srcs = ["psi_match_test.cpp"],
+    linkopts = PSI_LINKOPTS,
+    deps = [
+        ":psi_client",
+        ":psi_match",
+        ":psi_server",
+        "//private_set_intersection/cpp/util:status_matchers",
+        "//private_set_intersection/proto:psi_cc_proto",
+        "@abseil-cpp//absl/strings",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "psi_client",
     srcs = ["psi_client.cpp"],
     hdrs = ["psi_client.h"],
@@ -90,6 +122,7 @@ cc_library(
     deps = [
         ":parallel_ec",
         ":progress",
+        ":psi_match",
         "//private_set_intersection/cpp/datastructure",
         "//private_set_intersection/cpp/datastructure:bloom_filter",
         "//private_set_intersection/cpp/datastructure:gcs",
