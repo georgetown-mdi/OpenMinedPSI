@@ -2,6 +2,7 @@
 #define PRIVATE_SET_INTERSECTION_JAVASCRIPT_BINDINGS_UTILS_H_
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "absl/status/statusor.h"
@@ -44,6 +45,22 @@ emscripten::val ToJSObject(absl::StatusOr<T> statusor) {
     status.set("StatusCode", statusor.status().raw_code());
     status.set("Message", statusor.status().message());
     result.set("Status", status);
+  }
+  return result;
+}
+
+// Converts a Status to the ToJSObject structure, with a null `Value`.
+inline emscripten::val ToJSStatus(const absl::Status& status) {
+  auto result = emscripten::val::object();
+  result.set("Value", emscripten::val::null());
+  if (status.ok()) {
+    result.set("Status", emscripten::val::null());
+  } else {
+    auto wire_status = emscripten::val::object();
+    wire_status.set("StatusCode", status.raw_code());
+    // As a std::string: embind has no wire type for a string_view.
+    wire_status.set("Message", std::string(status.message()));
+    result.set("Status", wire_status);
   }
   return result;
 }

@@ -41,6 +41,21 @@ declare module 'psi_*' {
   type CreateServerResult = Result & {
     readonly Value: Server
   }
+  type CreateMatchResult = Result & {
+    readonly Value: Match
+  }
+  type StatusResult = Result & {
+    readonly Value: null
+  }
+  type FinishMatchResult = Result & {
+    readonly Value: {
+      readonly IntersectionSize: number
+      readonly DecryptedCount: number
+      // Null unless the match reveals the intersection.
+      readonly ResponseIndices: Uint32Array | null
+      readonly SetupIndices: Uint32Array | null
+    }
+  }
 
   export type Server = {
     readonly delete: () => void
@@ -80,7 +95,19 @@ declare module 'psi_*' {
       serverResponse: Uint8Array,
       progress?: ProgressSlot
     ) => GetIntersectionSizeResult
+    readonly CreateMatch: () => CreateMatchResult
     readonly GetPrivateKeyBytes: () => Uint8Array
+  }
+
+  export type Match = {
+    readonly delete: () => void
+    readonly AddSetupBytes: (bytes: Uint8Array) => StatusResult
+    readonly SealSetup: () => StatusResult
+    readonly MatchResponsePiece: (
+      bytes: Uint8Array,
+      progress?: ProgressSlot
+    ) => StatusResult
+    readonly Finish: () => FinishMatchResult
   }
 
   export type Package = {

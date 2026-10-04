@@ -21,6 +21,7 @@
 #include "absl/memory/memory.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
+#include "openssl/mem.h"
 #include "openssl/obj_mac.h"
 #include "private_set_intersection/cpp/datastructure/bloom_filter.h"
 #include "private_set_intersection/cpp/datastructure/gcs.h"
@@ -323,6 +324,14 @@ PsiClient::ProcessResponseForAssociationTable(
       return absl::InvalidArgumentError("Impossible");
     }
   }
+}
+
+StatusOr<std::unique_ptr<PsiMatch>> PsiClient::CreateMatch() const {
+  std::string key = ec_cipher_->GetPrivateKeyBytes();
+  StatusOr<std::unique_ptr<PsiMatch>> match =
+      PsiMatch::Create(key, reveal_intersection);
+  OPENSSL_cleanse(key.data(), key.size());
+  return match;
 }
 
 /**

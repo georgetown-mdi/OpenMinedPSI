@@ -1,7 +1,105 @@
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "emscripten/bind.h"
+#include "private_set_intersection/cpp/psi_match.h"
 #include "private_set_intersection/javascript/cpp/utils.h"
 #include "private_set_intersection/proto/psi.pb.h"
 #include "psi_client.h"
+
+namespace {
+
+// The most of a JS byte array copied into linear memory at once, so a large
+// setup or response never needs a copy of its own size.
+constexpr std::size_t kWindowBytes = std::size_t{1} << 20;
+
+// Hands the bytes of the Uint8Array `bytes` to `consume` in windows of at most
+// kWindowBytes, each copied with one TypedArray.set. An empty array is handed
+// over as one empty window, so `consume` still runs its call-order checks.
+template <typename Consume>
+absl::Status ForEachWindow(const emscripten::val& bytes, Consume consume) {
+  const std::size_t length = bytes["length"].as<std::size_t>();
+  if (length == 0) return consume(absl::string_view());
+  std::vector<std::uint8_t> window(std::min(length, kWindowBytes));
+  for (std::size_t at = 0; at < length; at += window.size()) {
+    const std::size_t size = std::min(window.size(), length - at);
+    // A fresh view each time: growing the heap detaches the previous one.
+    emscripten::val(emscripten::typed_memory_view(size, window.data()))
+        .call<void>("set",
+                    bytes.call<emscripten::val>("subarray", at, at + size));
+    absl::Status status = consume(
+        absl::string_view(reinterpret_cast<const char*>(window.data()), size));
+    if (!status.ok()) return status;
+  }
+  return absl::OkStatus();
+}
+
+// A JS-owned Uint32Array copy of `values`.
+emscripten::val ToUint32Array(const std::vector<std::uint32_t>& values) {
+  return emscripten::val::global("Uint32Array")
+      .new_(emscripten::typed_memory_view(values.size(), values.data()));
+}
+
+}  // namespace
+
+EMSCRIPTEN_BINDINGS(PSI_Match) {
+  using emscripten::optional_override;
+  using private_set_intersection::ProgressPointer;
+  using private_set_intersection::PsiMatch;
+  using private_set_intersection::PsiMatchResult;
+  using private_set_intersection::ToJSStatus;
+
+  emscripten::class_<PsiMatch>("PsiMatch")
+      .smart_ptr<std::shared_ptr<PsiMatch>>("std::shared_ptr<PsiMatch>")
+      .function(
+          "AddSetupBytes",
+          optional_override([](PsiMatch& self, const emscripten::val& bytes) {
+            return ToJSStatus(
+                ForEachWindow(bytes, [&](absl::string_view window) {
+                  return self.AddSetupBytes(window);
+                }));
+          }))
+      .function("SealSetup", optional_override([](PsiMatch& self) {
+                  return ToJSStatus(self.SealSetup());
+                }))
+      .function(
+          "MatchResponsePiece",
+          optional_override([](PsiMatch& self, const emscripten::val& bytes,
+                               const emscripten::val& progress_ptr) {
+            std::int32_t* progress = ProgressPointer(progress_ptr);
+            return ToJSStatus(
+                ForEachWindow(bytes, [&](absl::string_view window) {
+                  return self.MatchResponsePiece(window, progress);
+                }));
+          }))
+      .function("Finish", optional_override([](PsiMatch& self) {
+                  absl::StatusOr<PsiMatchResult> finished = self.Finish();
+                  if (!finished.ok()) return ToJSStatus(finished.status());
+                  auto value = emscripten::val::object();
+                  value.set("IntersectionSize",
+                            static_cast<double>(finished->intersection_size));
+                  value.set("DecryptedCount",
+                            static_cast<double>(finished->decrypted_count));
+                  if (self.reveal_intersection()) {
+                    value.set("ResponseIndices",
+                              ToUint32Array(finished->response_indices));
+                    value.set("SetupIndices",
+                              ToUint32Array(finished->setup_indices));
+                  } else {
+                    value.set("ResponseIndices", emscripten::val::null());
+                    value.set("SetupIndices", emscripten::val::null());
+                  }
+                  auto result = emscripten::val::object();
+                  result.set("Value", value);
+                  result.set("Status", emscripten::val::null());
+                  return result;
+                }));
+}
 
 EMSCRIPTEN_BINDINGS(PSI_Client) {
   using absl::StatusOr;
@@ -196,6 +294,9 @@ EMSCRIPTEN_BINDINGS(PSI_Client) {
             }
             return ToJSObject(result);
           }))
+      .function("CreateMatch", optional_override([](const PsiClient& self) {
+                  return ToJSObject(ToShared(self.CreateMatch()));
+                }))
       .function(
           "GetPrivateKeyBytes", optional_override([](const PsiClient& self) {
             const std::string byte_string = self.GetPrivateKeyBytes();

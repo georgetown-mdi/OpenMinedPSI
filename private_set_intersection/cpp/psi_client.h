@@ -22,6 +22,7 @@
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "private_join_and_compute/crypto/ec_commutative_cipher.h"
+#include "private_set_intersection/cpp/psi_match.h"
 #include "private_set_intersection/proto/psi.pb.h"
 
 namespace private_set_intersection {
@@ -165,6 +166,15 @@ class PsiClient {
       const psi_proto::ServerSetup& server_setup,
       const psi_proto::Response& server_response,
       int32_t* progress = nullptr) const;
+
+  // Starts a match of a Raw server setup against the server's response, both
+  // fed as byte windows; see PsiMatch. It decrypts with this instance's key
+  // and records the (response, setup) index pairs only if this instance was
+  // created with `reveal_intersection = true`. It holds its own copy of the
+  // key, so it may outlive this instance.
+  //
+  // Returns INTERNAL if the key cannot be loaded.
+  StatusOr<std::unique_ptr<PsiMatch>> CreateMatch() const;
 
   // Returns this instance's private key. This key should only be used to create
   // other client instances. DO NOT SEND THIS KEY TO ANY OTHER PARTY!
