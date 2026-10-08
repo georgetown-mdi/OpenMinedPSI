@@ -57,4 +57,18 @@ describe('PSI Client', () => {
       client.getIntersection.bind(client, serverSetup, serverResponse)
     ).toThrow()
   })
+
+  test("It should throw the engine's message when it refuses a call", async () => {
+    const client = psi.client!.createWithNewKey(false)
+    const serverSetup = new ServerSetup()
+    const serverResponse = new Response()
+
+    expect(
+      client.getIntersection.bind(client, serverSetup, serverResponse)
+    ).toThrow(
+      new Error(
+        'GetIntersection called on PsiClient with reveal_intersection == false'
+      )
+    )
+  })
 })

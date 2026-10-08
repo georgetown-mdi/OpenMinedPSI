@@ -43,7 +43,7 @@ emscripten::val ToJSObject(absl::StatusOr<T> statusor) {
     result.set("Value", emscripten::val::null());
     auto status = emscripten::val::object();
     status.set("StatusCode", statusor.status().raw_code());
-    status.set("Message", statusor.status().message());
+    status.set("Message", std::string(statusor.status().message()));
     result.set("Status", status);
   }
   return result;
@@ -90,7 +90,7 @@ emscripten::val ToSerializedJSObject(absl::StatusOr<T> statusor) {
     result.set("Value", emscripten::val::null());
     auto status = emscripten::val::object();
     status.set("StatusCode", statusor.status().raw_code());
-    status.set("Message", statusor.status().message());
+    status.set("Message", std::string(statusor.status().message()));
     result.set("Status", status);
   }
   return result;

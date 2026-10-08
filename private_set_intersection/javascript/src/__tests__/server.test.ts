@@ -97,4 +97,16 @@ describe('PSI Server', () => {
       )
     ).toThrow()
   })
+
+  test("It should throw the engine's message when it refuses a request", async () => {
+    const server = psi.server!.createWithNewKey(false)
+    const client = psi.client!.createWithNewKey(true)
+    const request = client.createRequest(['Element 0'])
+
+    expect(server.processRequest.bind(server, request)).toThrow(
+      new Error(
+        'Client expects `reveal_intersection` = 1, but it is actually 0'
+      )
+    )
+  })
 })
