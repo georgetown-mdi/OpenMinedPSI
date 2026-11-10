@@ -1,0 +1,51 @@
+version: 2
+updates:
+  # package.json and package-lock.json at the root: the two runtime
+  # dependencies the published tarball declares, and the JavaScript build and
+  # test toolchain. Bazel modules, emsdk, Bazel itself and node.lib are not read
+  # by Dependabot; DEPENDENCY_PINS.md gives their update route.
+  - package-ecosystem: npm
+    directory: "/"
+    target-branch: "master"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    # Never adopt a freshly published release: the cooldown gives the ecosystem
+    # time to expose a compromised one before it is taken. It delays routine
+    # version bumps only.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 5
+    groups:
+      # Routine development-tree bumps in one pull request. The runtime
+      # dependencies stay out of it, one pull request each. Rollup, its
+      # plugins, TypeScript and the protoc plugins build the shipped bundle, so
+      # this group still changes release output.
+      development:
+        dependency-type: development
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions in .github/workflows. actions/* sit on a floating major tag;
+  # third-party actions sit on a commit with the release in a trailing comment.
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: "master"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    cooldown:
+      # Only default-days is valid for the github-actions ecosystem.
+      default-days: 7
+    ignore:
+      # A floating major tag already tracks the latest release within that
+      # major, so a minor or patch pull request would only freeze it. Major
+      # bumps still arrive for review.
+      - dependency-name: "actions/*"
+        update-types:
+          ["version-update:semver-minor", "version-update:semver-patch"]

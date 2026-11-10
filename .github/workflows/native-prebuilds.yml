@@ -6,6 +6,9 @@
 #
 # Manual: run from the Actions tab (workflow_dispatch). The `package` job's
 # tarball artifact is what gets vendored downstream (e.g. psilink's lib/).
+# Scheduled: a weekly run builds and validates every leg but neither attests
+# nor uploads the tarball, so a vendorable artifact only ever comes from a
+# dispatched run.
 #
 # Node-API is ABI-stable, so one .node per (OS, arch, libc) serves every
 # supported Node -- the addon is built against a pinned N-API level (NAPI_VERSION
@@ -37,6 +40,8 @@ name: Native prebuilds
 
 on:
   workflow_dispatch: {}
+  schedule:
+    - cron: "45 5 * * 1"
 
 # Least privilege by default: the build and validate jobs only read the
 # repository and exchange artifacts (a runtime-scoped Actions API, not the
@@ -80,6 +85,9 @@ jobs:
           - { os: windows-latest, target: win32-x64 }
     steps:
       - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -105,30 +113,24 @@ jobs:
           disk-cache: napi-${{ matrix.target }}${{ matrix.libc && format('-{0}', matrix.libc) || '' }}${{ runner.os == 'Windows' && '-warm' || '' }}
           repository-cache: true
 
-      - name: Resolve Node version (Windows)
-        # Key the node-gyp header cache on the exact Node version node.lib is
-        # cut for; setup-node@v6 with node-version:22 tracks the latest 22.x.
-        if: runner.os == 'Windows'
-        id: node_ver
-        run: echo "version=$(node --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache node-gyp headers (Windows)
-        # `node-gyp install` downloads Node's headers + node.lib (~1.5 min cold)
-        # into this dir; caching it makes the fetch below a no-op on a warm run.
-        if: runner.os == 'Windows'
-        uses: actions/cache@v6
-        with:
-          path: ~/AppData/Local/node-gyp/Cache
-          key: node-gyp-${{ runner.os }}-${{ steps.node_ver.outputs.version }}
-
       - name: Fetch Node import library (Windows)
+        # node.lib resolves the napi_* imports the addon links against; the
+        # N-API headers come from MODULE.bazel, so it is the only file needed.
+        # It is fetched at a pinned Node release and checked against a pinned
+        # sha256 (the value in that release's SHASUMS256.txt), from the URL
+        # `node-gyp install` fetches it from. To move it, take the new
+        # release's win-x64/node.lib line from its SHASUMS256.txt.
         if: runner.os == 'Windows'
+        env:
+          NODE_LIB_VERSION: 22.23.3
+          NODE_LIB_SHA256: c243185f2347870cadb637c909bf123fc703dc65dbfa769b17ec45a4b661d782
         run: |
-          # node.lib resolves the napi_* imports the addon links against.
-          npx --yes node-gyp install
-          node_lib=$(find "$LOCALAPPDATA/node-gyp/Cache" -iname node.lib 2>/dev/null | grep -i 'x64/node.lib' | head -1)
-          if [ -z "$node_lib" ]; then
-            echo "::error::could not locate node.lib for the N-API link"
+          node_lib="$RUNNER_TEMP/node.lib"
+          curl -fsSL --retry 3 -o "$node_lib" \
+            "https://nodejs.org/download/release/v${NODE_LIB_VERSION}/win-x64/node.lib"
+          actual=$(sha256sum < "$node_lib" | cut -d' ' -f1)
+          if [ "$actual" != "$NODE_LIB_SHA256" ]; then
+            echo "::error::node.lib v${NODE_LIB_VERSION} sha256 $actual does not match the pinned $NODE_LIB_SHA256"
             exit 1
           fi
           echo "NODE_LIB=$node_lib" >> "$GITHUB_ENV"
@@ -292,6 +294,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -334,8 +339,11 @@ jobs:
       # store, which is where a downstream consumer reads the claim from.
       attestations: write
     steps:
-      # Checkout only supplies the pack script; this job runs no build.
+      # Checkout only supplies the pack script; this job runs no build. The
+      # job holds the signing token, so the checkout keeps no git credential.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -407,11 +415,16 @@ jobs:
         # Placed ahead of the upload so an artifact is only published once its
         # provenance was signed, matching how the worker-teardown gate above
         # blocks the artifact rather than annotating it.
+        #
+        # A scheduled run skips this step and the upload below: it tests the
+        # release path and publishes nothing.
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
 
-      - uses: actions/upload-artifact@v7
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
         with:
           name: openmined-psi-tarball
           path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz

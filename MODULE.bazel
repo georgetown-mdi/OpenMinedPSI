@@ -81,11 +81,13 @@ use_repo(zig_toolchains, "zig_sdk")
 ## EMSDK
 emsdk_version = "4.0.10"
 bazel_dep(name = "emsdk", version = emsdk_version)
+# Pinned by commit, not by the mutable tag: 62a853cd is the commit tag 4.0.10
+# names. Move the commit and emsdk_version together (git ls-remote the tag).
 git_override(
     module_name = "emsdk",
+    commit = "62a853cd3b3134398ce85cde8bb5cbb2ef0194cb",
     remote = "https://github.com/emscripten-core/emsdk.git",
     strip_prefix = "bazel",
-    tag = emsdk_version,
 )
 emscripten_deps = use_extension(
     "@emsdk//:emscripten_deps.bzl",
