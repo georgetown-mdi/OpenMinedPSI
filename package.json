@@ -77,7 +77,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "google-protobuf": "^4.0.2",
+    "google-protobuf": "^4.0.3",
     "node-gyp-build": "^4.8.4"
   },
   "overrides": {
