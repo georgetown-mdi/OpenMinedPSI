@@ -4,8 +4,14 @@
 # resolve the right prebuild at load time with node-gyp-build; no end-user
 # compiler is needed.
 #
-# Manual: run from the Actions tab (workflow_dispatch). The `package` job's
-# tarball artifact is what gets vendored downstream (e.g. psilink's lib/).
+# Manual: run from the Actions tab (workflow_dispatch). The `attest` job's
+# `openmined-psi-tarball` artifact is what gets vendored downstream (e.g.
+# psilink's lib/).
+# Scheduled: a weekly run builds and validates every leg. Every run, scheduled
+# or dispatched, uploads the per-platform `prebuild-*` binaries, `bundle-dist`
+# and the `packed-tarball` the later jobs read, none of them attested. Only a
+# dispatched run runs `attest`, which signs the tarball's provenance and uploads
+# it as `openmined-psi-tarball`.
 #
 # Node-API is ABI-stable, so one .node per (OS, arch, libc) serves every
 # supported Node -- the addon is built against a pinned N-API level (NAPI_VERSION
@@ -25,22 +31,31 @@
 # earlier GLIBC_2.38 regression fails the build instead of shipping silently.
 #
 # Job layout:
-#   build-addon    matrix, one native .node per (OS, arch, libc)
-#   validate-linux matrix, load each Linux prebuild in its real libc/arch
-#                  (glibc -> node:*-bookworm-slim, musl -> node:*-alpine) on a
-#                  native runner -- no emulation
-#   build-bundle   the arch-independent WASM/protoc/rollup dist/ tree; NO `needs`
-#                  so it runs alongside build-addon
-#   package        downloads the prebuilds + bundle, folds them in, and packs
+#   build-addon      matrix, one native .node per (OS, arch, libc)
+#   validate-linux   matrix, load each Linux prebuild in its real libc/arch
+#                    (glibc -> node:*-bookworm-slim, musl -> node:*-alpine) on a
+#                    native runner -- no emulation
+#   build-bundle     the arch-independent WASM/protoc/rollup dist/ tree; NO
+#                    `needs` so it runs alongside build-addon
+#   package          downloads the prebuilds + bundle, folds them in, packs, and
+#                    records the tarball's sha256 as a job output
+#   validate-tarball installs the tarball, its dependencies resolved from the
+#                    registry with no lockfile, and runs the worker-teardown
+#                    gate; holds no scope beyond contents: read
+#   attest           dispatch only; checks the tarball against package's
+#                    sha256, signs its provenance, and uploads it; runs no
+#                    registry code
 
 name: Native prebuilds
 
 on:
   workflow_dispatch: {}
+  schedule:
+    - cron: "45 5 * * 1"
 
 # Least privilege by default: the build and validate jobs only read the
 # repository and exchange artifacts (a runtime-scoped Actions API, not the
-# GITHUB_TOKEN), so they need no write scope. The `package` job raises exactly
+# GITHUB_TOKEN), so they need no write scope. The `attest` job raises exactly
 # the two scopes signing an attestation requires, and raises them there rather
 # than here so nothing else in the workflow runs with them.
 permissions:
@@ -67,12 +82,12 @@ jobs:
           - { os: ubuntu-24.04, target: linux-x64,   libc: musl,  zig: linux_amd64_musl }
           - { os: ubuntu-24.04, target: linux-arm64, libc: glibc, zig: linux_arm64_gnu.2.28 }
           - { os: ubuntu-24.04, target: linux-arm64, libc: musl,  zig: linux_arm64_musl }
-          - { os: macos-14, target: darwin-arm64, macos_min: "11.0" }
+          - { os: macos-15, target: darwin-arm64, macos_min: "11.0" }
           # darwin-x64 is cross-compiled on the arm64 runner (the macOS SDK is
           # universal) rather than a native macos-13 Intel runner, which GitHub
           # is deprecating and which queued for a runner indefinitely. The .node
           # links with -undefined dynamic_lookup, so no import library is needed.
-          - { os: macos-14, target: darwin-x64, bazel_cpu: darwin_x86_64, macos_min: "10.15" }
+          - { os: macos-15, target: darwin-x64, bazel_cpu: darwin_x86_64, macos_min: "10.15" }
           # Windows is the finicky target: the .node link resolves N-API symbols
           # against Node's import library (node.lib), and the transitive
           # rules_swift toolchain probe needs a real Swift install even though
@@ -80,6 +95,11 @@ jobs:
           - { os: windows-latest, target: win32-x64 }
     steps:
       - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          # setup-bazel below still exports it, read-only, to every later step
+          # as BAZELISK_GITHUB_TOKEN.
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -87,48 +107,29 @@ jobs:
 
       - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
         with:
-          bazelisk-cache: true
-          # setup-bazel skips re-saving a disk cache whenever it restores the
-          # exact key (BUILD-file hash) it would save under. An early failing
-          # Windows run once saved an empty ~225-byte D:/_bazel-disk (the runner
-          # roots the bazel output base on D:), and because the BUILD hash never
-          # changes, every later run restored that empty entry and skipped the
-          # save -- perpetuating a cold ~9-min build. The `-warm` suffix abandons
-          # the poisoned entry so the next run misses, builds cold once, and saves
-          # a real warm cache. This re-poisons only if a Windows run FAILS before
-          # the build populates the cache: setup-bazel's post step saves under
-          # post-if !cancelled(), so a failed cold run can seed an empty -warm
-          # entry that then sticks and Windows silently goes cold again (correct
-          # artifacts, just slow). If that happens, bump the suffix to recover.
-          # Non-Windows caches were healthy, so they keep their keys. The Linux
-          # keys carry the libc so the glibc and musl legs cache independently.
-          disk-cache: napi-${{ matrix.target }}${{ matrix.libc && format('-{0}', matrix.libc) || '' }}${{ runner.os == 'Windows' && '-warm' || '' }}
-          repository-cache: true
-
-      - name: Resolve Node version (Windows)
-        # Key the node-gyp header cache on the exact Node version node.lib is
-        # cut for; setup-node@v6 with node-version:22 tracks the latest 22.x.
-        if: runner.os == 'Windows'
-        id: node_ver
-        run: echo "version=$(node --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache node-gyp headers (Windows)
-        # `node-gyp install` downloads Node's headers + node.lib (~1.5 min cold)
-        # into this dir; caching it makes the fetch below a no-op on a warm run.
-        if: runner.os == 'Windows'
-        uses: actions/cache@v6
-        with:
-          path: ~/AppData/Local/node-gyp/Cache
-          key: node-gyp-${{ runner.os }}-${{ steps.node_ver.outputs.version }}
+          # No cache: a signed build reads nothing another job could write; every run builds cold (the Windows leg took about 9 minutes cold).
+          bazelisk-cache: false
+          repository-cache: false
+          disk-cache: false
 
       - name: Fetch Node import library (Windows)
+        # node.lib resolves the napi_* imports the addon links against; the
+        # N-API headers come from MODULE.bazel, so it is the only file needed.
+        # It is fetched at a pinned Node release and checked against a pinned
+        # sha256 (the value in that release's SHASUMS256.txt), from the URL
+        # `node-gyp install` fetches it from. To move it, take the new
+        # release's win-x64/node.lib line from its SHASUMS256.txt.
         if: runner.os == 'Windows'
+        env:
+          NODE_LIB_VERSION: 22.23.3
+          NODE_LIB_SHA256: c243185f2347870cadb637c909bf123fc703dc65dbfa769b17ec45a4b661d782
         run: |
-          # node.lib resolves the napi_* imports the addon links against.
-          npx --yes node-gyp install
-          node_lib=$(find "$LOCALAPPDATA/node-gyp/Cache" -iname node.lib 2>/dev/null | grep -i 'x64/node.lib' | head -1)
-          if [ -z "$node_lib" ]; then
-            echo "::error::could not locate node.lib for the N-API link"
+          node_lib="$RUNNER_TEMP/node.lib"
+          curl -fsSL --retry 3 -o "$node_lib" \
+            "https://nodejs.org/download/release/v${NODE_LIB_VERSION}/win-x64/node.lib"
+          actual=$(sha256sum < "$node_lib" | cut -d' ' -f1)
+          if [ "$actual" != "$NODE_LIB_SHA256" ]; then
+            echo "::error::node.lib v${NODE_LIB_VERSION} sha256 $actual does not match the pinned $NODE_LIB_SHA256"
             exit 1
           fi
           echo "NODE_LIB=$node_lib" >> "$GITHUB_ENV"
@@ -140,15 +141,16 @@ jobs:
         # PATH -- it needs swiftc, SDKROOT, and the SDK's Info.plist. This addon
         # is pure C++ and never invokes Swift (Linux degrades quietly; only the
         # Windows path is strict), so install a real toolchain purely to satisfy
-        # the probe. `cache: true` caches the ~GB installer download (the safely
-        # cacheable part -- the MSI install itself sets registry/PATH state and
-        # must still run) so a warm run skips the ~2-min re-download.
+        # the probe. `cache: false` skips the action's installer cache: the
+        # installer runs elevated, so a signed build must not run one that
+        # another job could have written. The ~GB installer is downloaded on
+        # every run (about 2 minutes).
         if: runner.os == 'Windows'
         uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5 # v0.4.0
         with:
           swift-version: swift-6.3.3-release
           swift-build: 6.3.3-RELEASE
-          cache: true
+          cache: false
 
       - name: Build addon
         run: |
@@ -292,6 +294,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          # setup-bazel below still exports it, read-only, to every later step
+          # as BAZELISK_GITHUB_TOKEN.
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -299,14 +306,10 @@ jobs:
 
       - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
         with:
-          bazelisk-cache: true
-          # A fresh dedicated key. This cache holds the host protoc (and the
-          # emscripten/WASM outputs), so protoc is built from scratch only on the
-          # first run and restored warm afterwards -- it is no longer rebuilt in
-          # the package tail every run. Distinct from every build-addon key, so
-          # the concurrent Linux addon leg cannot race its save.
-          disk-cache: napi-bundle
-          repository-cache: true
+          # No cache: a signed build reads nothing another job could write; every run builds cold (protoc and the WASM outputs included).
+          bazelisk-cache: false
+          repository-cache: false
+          disk-cache: false
 
       - name: Install JS toolchain (rollup + plugins)
         run: npm ci
@@ -325,17 +328,16 @@ jobs:
     name: gather + pack tarball
     needs: [build-addon, validate-linux, build-bundle]
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      # The OIDC token Sigstore's Fulcio issues this job's signing certificate
-      # against. Keyless: no signing key is stored, rotated, or read anywhere.
-      id-token: write
-      # actions/attest-build-provenance's write to this repository's attestation
-      # store, which is where a downstream consumer reads the claim from.
-      attestations: write
+    # Runs no registry-resolved code, so the sha256 it records is taken before
+    # any unlocked install can touch the tarball.
+    outputs:
+      tarball: ${{ steps.hash.outputs.tarball }}
+      sha256: ${{ steps.hash.outputs.sha256 }}
     steps:
       # Checkout only supplies the pack script; this job runs no build.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -359,6 +361,62 @@ jobs:
           bash private_set_intersection/javascript/scripts/pack-native-package.sh \
             "$GITHUB_WORKSPACE/prebuilds-dist"
 
+      - name: Record tarball sha256
+        # Another job in the run can overwrite a same-named artifact, so the
+        # jobs that read the tarball hold it against this value.
+        id: hash
+        run: |
+          set -- private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+            echo "::error::expected exactly one packed tarball, found $#"
+            exit 1
+          fi
+          echo "tarball=$(basename "$1")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum < "$1" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packed-tarball
+          path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
+          if-no-files-found: error
+
+  validate-tarball:
+    name: validate tarball (worker teardown)
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      # Checkout only supplies the validation harness.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: packed-tarball
+          path: packed
+
+      - name: Check tarball against package's sha256
+        # So the gate below tests the bytes attest signs.
+        env:
+          EXPECTED_TARBALL: ${{ needs.package.outputs.tarball }}
+          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          set -- packed/openmined-psi.js-*.tgz
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ] || [ "$(basename "$1")" != "$EXPECTED_TARBALL" ]; then
+            echo "::error::expected exactly one tarball named $EXPECTED_TARBALL"
+            exit 1
+          fi
+          actual=$(sha256sum < "$1" | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::tarball sha256 $actual does not match the packed $EXPECTED_SHA256"
+            exit 1
+          fi
+
       - name: Validate worker-teardown safety
         # HARD regression gate for the worker_threads teardown SIGSEGV the napi
         # binding fixes (the OPENSSL_thread_stop drain in
@@ -366,8 +424,8 @@ jobs:
         # tarball exactly as a consumer does and drives the REAL native loader
         # through worker load / crypto op / terminate across the crash matrix; a
         # thread-exit destructor re-armed after the drain crashes the worker
-        # (exit 139), fails this step, and blocks the tarball artifact. Runs on the
-        # runner's glibc x64 -- the libc that actually unloads the addon (musl
+        # (exit 139), fails this step, and so skips `attest`, which signs and
+        # uploads `openmined-psi-tarball`. Runs on the runner's glibc x64 -- the libc that actually unloads the addon (musl
         # dlclose is a no-op; macOS and Windows differ), so it is where the crash
         # can occur; the regression it guards lives in shared C++ and so surfaces
         # here. Detection is best-effort only in that a teardown crash can be
@@ -375,24 +433,62 @@ jobs:
         # timeout-minutes bounds a hung worker (no per-case timeout in the harness)
         # so it fails fast instead of riding the job's default timeout.
         timeout-minutes: 10
+        env:
+          TARBALL: ${{ needs.package.outputs.tarball }}
         run: |
-          set -- "$GITHUB_WORKSPACE"/private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
-          if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-            echo "::error::expected exactly one packed tarball, found $#"
-            exit 1
-          fi
-          tarball="$1"
+          tarball_path="$GITHUB_WORKSPACE/packed/$TARBALL"
           work="$(mktemp -d)"
           cp "$GITHUB_WORKSPACE/worker-teardown-validation.mjs" "$work/"
-          # --ignore-scripts: this install is an unpinned resolution of the tarball's
-          # transitive deps from the registry; the harness only needs require-time
-          # resolution (node-gyp-build finds the bundled prebuild), so block any
-          # dependency lifecycle script from running in the release job.
+          # This install is an unpinned resolution of the tarball's transitive
+          # deps from the registry, which is why this job holds no scope beyond
+          # contents: read. The harness only needs require-time resolution
+          # (node-gyp-build finds the bundled prebuild), so --ignore-scripts
+          # blocks any dependency lifecycle script.
           ( cd "$work" \
             && npm init -y >/dev/null \
-            && npm install --no-audit --no-fund --ignore-scripts "$tarball" >/dev/null \
+            && npm install --no-audit --no-fund --ignore-scripts "$tarball_path" >/dev/null \
             && node worker-teardown-validation.mjs \
                  ./node_modules/@openmined/psi.js/psi_native_node.js )
+
+  attest:
+    name: attest + upload tarball
+    # Every validation job gates the attestation and the upload. Job-level
+    # permissions cannot depend on the event, so the signing scopes live on a
+    # job that only a dispatched run reaches.
+    needs: [build-addon, validate-linux, build-bundle, package, validate-tarball]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # The OIDC token Sigstore's Fulcio issues this job's signing certificate
+      # against. Keyless: no signing key is stored, rotated, or read anywhere.
+      id-token: write
+      # actions/attest-build-provenance's write to this repository's attestation
+      # store, which is where a downstream consumer reads the claim from.
+      attestations: write
+    # No checkout, no setup-node, no install: this job runs no registry code.
+    steps:
+      - name: Download tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: packed-tarball
+          path: private_set_intersection/javascript/dist
+
+      - name: Check tarball against package's sha256
+        env:
+          EXPECTED_TARBALL: ${{ needs.package.outputs.tarball }}
+          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          set -- private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ] || [ "$(basename "$1")" != "$EXPECTED_TARBALL" ]; then
+            echo "::error::expected exactly one tarball named $EXPECTED_TARBALL"
+            exit 1
+          fi
+          actual=$(sha256sum < "$1" | cut -d' ' -f1)
+          if [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error::tarball sha256 $actual does not match the packed $EXPECTED_SHA256"
+            exit 1
+          fi
 
       - name: Attest build provenance
         # Binds the packed tarball's sha256 to this workflow run -- repository,
@@ -404,9 +500,11 @@ jobs:
         # with `gh attestation verify --repo <this repo> --signer-workflow
         # <this workflow> --source-digest <this commit>`.
         #
-        # Placed ahead of the upload so an artifact is only published once its
-        # provenance was signed, matching how the worker-teardown gate above
-        # blocks the artifact rather than annotating it.
+        # Placed ahead of the upload so `openmined-psi-tarball` is only uploaded
+        # once its provenance was signed, and only on a dispatched run. The
+        # `package` job uploads an unattested `packed-tarball` on every run for
+        # the validation and attest jobs to read; it is an intermediate, not
+        # something to vendor.
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: private_set_intersection/javascript/dist/openmined-psi.js-*.tgz
