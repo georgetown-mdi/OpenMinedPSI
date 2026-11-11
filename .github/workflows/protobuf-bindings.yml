@@ -32,7 +32,7 @@ jobs:
     outputs:
       bindings: ${{ steps.filter.outputs.bindings }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # No step pushes; keep the token out of the checkout's git config.
           persist-credentials: false
@@ -67,12 +67,12 @@ jobs:
       PSI_PB_JS: private_set_intersection/javascript/bin/psi_pb.js
       PSI_PB_DTS: private_set_intersection/javascript/src/implementation/proto/psi_pb.d.ts
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # No step pushes; keep the token out of the checkout's git config.
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
 
@@ -109,7 +109,7 @@ jobs:
 
       - name: Upload generated bindings
         if: failure() && steps.compare.outcome == 'failure'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: psi-pb-generated
           path: |

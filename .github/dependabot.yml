@@ -31,8 +31,8 @@ updates:
           - "minor"
           - "patch"
 
-  # GitHub Actions in .github/workflows. actions/* sit on a floating major tag;
-  # third-party actions sit on a commit with the release in a trailing comment.
+  # GitHub Actions in .github/workflows, each pinned to a commit with its
+  # release in a trailing comment.
   - package-ecosystem: github-actions
     directory: "/"
     target-branch: "master"
@@ -43,10 +43,12 @@ updates:
     cooldown:
       # Only default-days is valid for the github-actions ecosystem.
       default-days: 7
-    ignore:
-      # A floating major tag already tracks the latest release within that
-      # major, so a minor or patch pull request would only freeze it. Major
-      # bumps still arrive for review.
-      - dependency-name: "actions/*"
+    groups:
+      # Minor and patch bumps of every action in one pull request; a major
+      # bump arrives alone for review.
+      actions:
+        patterns:
+          - "*"
         update-types:
-          ["version-update:semver-minor", "version-update:semver-patch"]
+          - "minor"
+          - "patch"
