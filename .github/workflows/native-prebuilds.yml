@@ -84,8 +84,10 @@ jobs:
           - { os: ubuntu-24.04, target: linux-arm64, libc: musl,  zig: linux_arm64_musl }
           # Each macOS leg builds natively on a runner of its own arch. The .node
           # links with -undefined dynamic_lookup, so no import library is needed.
-          - { os: macos-15, target: darwin-arm64, macos_min: "11.0" }
-          - { os: macos-15-intel, target: darwin-x64, macos_min: "10.15" }
+          # The floor check after the build holds the addon's Mach-O `arch` and
+          # its LC_BUILD_VERSION minos to these values.
+          - { os: macos-15, target: darwin-arm64, arch: arm64, macos_min: "11.0" }
+          - { os: macos-15-intel, target: darwin-x64, arch: x86_64, macos_min: "10.15" }
           # Windows is the finicky target: the .node link resolves N-API symbols
           # against Node's import library (node.lib), and the transitive
           # rules_swift toolchain probe needs a real Swift install even though
@@ -226,13 +228,39 @@ jobs:
               "--linkopt=$NODE_LIB" \
               //private_set_intersection/napi:addon
           else
-            # macOS: a native build for the runner's arch. Pin the deployment
-            # target so the addon loads on older macOS than the runner's, not
-            # just the runner's own version.
+            # macOS: a native build for the runner's arch. The deployment
+            # target is set with --macos_minimum_os, not -mmacosx-version-min:
+            # the apple_support toolchain passes `-target
+            # <arch>-apple-macosx<macos_minimum_os>` after every copt and
+            # linkopt, and clang lets that triple override
+            # -mmacosx-version-min. Left unset, macos_minimum_os defaults to
+            # the runner's Xcode SDK version.
             bazel build -c opt --strip=always --config=napi \
-              --copt=-mmacosx-version-min=${{ matrix.macos_min }} \
-              --linkopt=-mmacosx-version-min=${{ matrix.macos_min }} \
+              --macos_minimum_os=${{ matrix.macos_min }} \
               //private_set_intersection/napi:addon
+          fi
+
+      - name: Check architecture and minimum macOS (macOS)
+        # Fails the leg unless the addon is a single-architecture Mach-O of the
+        # leg's arch whose one LC_BUILD_VERSION load command carries the leg's
+        # macos_min, so a toolchain or runner change cannot raise the floor
+        # without failing here.
+        if: runner.os == 'macOS'
+        env:
+          WANT_ARCH: ${{ matrix.arch }}
+          WANT_MINOS: ${{ matrix.macos_min }}
+        run: |
+          addon=bazel-bin/private_set_intersection/napi/psi_native.node
+          archs=$(lipo -archs "$addon")
+          minos=$(vtool -show-build "$addon" | awk '$1 == "minos" { printf "%s%s", sep, $2; sep = " " }')
+          echo "addon architectures: $archs; LC_BUILD_VERSION minos: $minos"
+          if [ "$archs" != "$WANT_ARCH" ]; then
+            echo "::error::addon architectures are '$archs', expected '$WANT_ARCH'"
+            exit 1
+          fi
+          if [ "$minos" != "$WANT_MINOS" ]; then
+            echo "::error::addon LC_BUILD_VERSION minos is '$minos', expected exactly one, '$WANT_MINOS'"
+            exit 1
           fi
 
       - name: Enforce libc floor (Linux)
