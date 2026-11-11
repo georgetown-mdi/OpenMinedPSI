@@ -6,7 +6,6 @@ load("@python_versions//3.10:defs.bzl", py_binary_3_10 = "py_binary", py_test_3_
 load("@python_versions//3.11:defs.bzl", py_binary_3_11 = "py_binary", py_test_3_11 = "py_test")
 load("@python_versions//3.12:defs.bzl", py_binary_3_12 = "py_binary", py_test_3_12 = "py_test")
 load("@python_versions//3.13:defs.bzl", py_binary_3_13 = "py_binary", py_test_3_13 = "py_test")
-load("@python_versions//3.9:defs.bzl", py_binary_3_9 = "py_binary", py_test_3_9 = "py_test")
 load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
 load("//tools:package.bzl", "VERSION_LABEL")
@@ -38,18 +37,6 @@ py_library(
     deps = [
         "//private_set_intersection/proto:psi_python_proto",
         requirement("protobuf"),
-    ],
-)
-
-py_test_3_9(
-    name = "test_3_9",
-    srcs = ["tests.py"],
-    legacy_create_init = False,
-    main = "tests.py",
-    srcs_version = "PY3",
-    deps = [
-        ":openmined_psi",
-        requirement("pytest"),
     ],
 )
 
@@ -97,19 +84,6 @@ py_test_3_13(
     srcs_version = "PY3",
     deps = [
         ":openmined_psi",
-        requirement("pytest"),
-    ],
-)
-
-py_binary_3_9(
-    name = "benchmark_3_9",
-    srcs = ["benchmarks.py"],
-    legacy_create_init = False,
-    main = "benchmarks.py",
-    srcs_version = "PY3",
-    deps = [
-        ":openmined_psi",
-        requirement("pytest-benchmark"),
         requirement("pytest"),
     ],
 )
@@ -203,7 +177,7 @@ py_wheel(
         "@bazel_tools//src/conditions:linux_x86_64": python_platform() + "_x86_64",
         "@bazel_tools//src/conditions:linux_aarch64": python_platform() + "_aarch64",
     }),
-    python_requires = ">=3.9",
+    python_requires = ">=3.10",
     python_tag = python_abi(),
     # NOTE: Keep this in sync with `requirements.in`
     requires = ["protobuf==6.30.2"],
