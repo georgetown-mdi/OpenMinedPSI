@@ -1,2 +1,4 @@
 /private_set_intersection/cpp/*
 /node_modules/*
+/private_set_intersection/javascript/src/implementation/proto/psi_pb.d.ts
+/private_set_intersection/javascript/bin/psi_pb.js
