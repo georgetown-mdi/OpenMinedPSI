@@ -648,13 +648,18 @@ jobs:
         run: |
           version="${TARBALL#openmined-psi.js-}"
           version="${version%.tgz}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::package version '$version' is not a semver version"
+          # The fork's version form, the one Alcove's psi_revendor.yaml accepts;
+          # any other suffix would be published as the latest Release.
+          if ! [[ "$version" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}-alcove\.[0-9]{1,4}$ ]]; then
+            echo "::error::package version '$version' is not <upstream version>-alcove.<N>, e.g. 2.0.6-alcove.2; only that form is released"
             exit 1
           fi
           tag="v$version"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+          if probe=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>&1); then
             echo "::error::tag $tag already exists; bump the package version to release a new build"
+            exit 1
+          elif ! grep -q 'HTTP 404' <<< "$probe"; then
+            echo "::error::could not check whether tag $tag exists: ${probe//$'\n'/ }"
             exit 1
           fi
           cd release
