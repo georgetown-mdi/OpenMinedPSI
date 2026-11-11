@@ -27,6 +27,22 @@ broken a build, not when a pin has fallen behind.
 | Node runtime in workflows | `actions/setup-node` `node-version` in `native-prebuilds.yml`; the `validate-linux` container images | The major `22`; the tags `node:22-bookworm-slim` and `node:22-alpine` | manual | Float within the major on purpose: they run the build tools and the load tests, and the shipped addon's ABI is fixed by the N-API level, not by them. Move the major by hand. |
 | Rust toolchain in `CI` | `dtolnay/rust-toolchain` in the `Rust` job of `CI.yml` | A commit of the action's `master` branch, with `toolchain: stable` | manual | The action publishes no releases; compare with its `master` branch. The host toolchain floats with `stable`; the Rust build itself uses the `rust.toolchain` version above. Whether Dependabot updates a commit pin with no release is unmeasured. |
 | Swift toolchain (Windows) | `native-prebuilds.yml`, Windows leg, `SWIFT_VERSION`, `SWIFT_BUILD` and `SWIFT_INSTALLER_SHA256` | The release names `swift-6.3.3-release` and `6.3.3-RELEASE`; the sha256 of that release's Windows installer | manual | Compare with the latest Swift release and move the three together. swift.org publishes no checksum or signature for the Windows installer, so take the sha256 by downloading the new installer and hashing it. The step downloads the installer from download.swift.org on every run, checks it against the pinned sha256, runs it elevated, and carries the machine and user variables it changed (`Path`, `SDKROOT` and the rest) into `GITHUB_PATH` and `GITHUB_ENV`, which the `win32-x64` `Build addon` step inherits. The addon compiles no Swift; the install satisfies the `rules_swift` toolchain probe, and the `win32-x64` prebuild it enables ships in the tarball Alcove vendors. |
-| Go lint tool | `go install golang.org/x/lint/golint@latest` in `CI.yml` | Not pinned | manual | Unpinned; CI only. |
+| Host tools in `CI` | `CI.yml`: `actions/setup-python` `python-version` in the `Python` job, `actions/setup-go` `go-version` in the `Go` job, `go install golang.org/x/lint/golint@latest`, `pip install --upgrade pip packaging` | The versions `3.13` and `1.23`; golint, pip and packaging not pinned | manual | CI only; none enters the JavaScript tarball. The Python and Go builds use the Bazel-downloaded toolchains above. Move a version by hand when its upstream drops support. |
 | Dev container base | `Dockerfile` `FROM ubuntu:26.04` | A tag | manual | Not on any build path; the image is for local development. |
 | Actions | Every `uses:` in every workflow except `dtolnay/rust-toolchain` (its own row above) | A commit with the release tag in a trailing comment | automatic | The `github-actions` block, weekly, with a cooldown. Minor and patch bumps arrive grouped in one pull request; a major bump arrives alone. |
+
+## Upstream OpenMined/PSI
+
+This fork tracks `OpenMined/PSI`. Upstream is checked at each fork release,
+that is, each change of the `-alcove.N` version in `package.json`:
+
+```sh
+git remote add upstream https://github.com/OpenMined/PSI.git
+git fetch upstream --tags
+git log --oneline master..upstream/master
+```
+
+What upstream has that the fork lacks arrives in a pull request that merges
+`upstream/master`, or a release tag, into a branch cut from `master`. The merge
+keeps the fork's pins (the table above) and its package version, and the
+pull request names the upstream tag or commit it takes and what it changes.

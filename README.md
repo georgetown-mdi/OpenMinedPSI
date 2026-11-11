@@ -149,6 +149,11 @@ See [CONTRIBUTORS.md](CONTRIBUTORS.md).
 Contains a Docker file with the build environment and some modifications to the
 C++/JavaScript build that allow more ways to work with the raw datastructure.
 
+Report a vulnerability as [SECURITY.md](SECURITY.md) sets out.
+[DEPENDENCY_PINS.md](DEPENDENCY_PINS.md) lists every pinned build input with
+its update route, and the route for taking upstream OpenMined/PSI changes,
+checked at each fork release.
+
 ```sh
 docker build -t openminedpsi-build .
 docker run -it --rm --mount type=bind,source=${PWD},target=/work openminedpsi-build /bin/bash
