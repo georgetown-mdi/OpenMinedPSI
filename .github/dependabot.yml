@@ -22,8 +22,9 @@ updates:
     groups:
       # Routine development-tree bumps in one pull request. The runtime
       # dependencies stay out of it, one pull request each. Rollup, its
-      # plugins, TypeScript and the protoc plugins build the shipped bundle, so
-      # this group still changes release output.
+      # plugins and TypeScript build the shipped bundle, so this group still
+      # changes release output. A protoc plugin bump that changes the generated
+      # bindings fails the Protobuf bindings check until they are recommitted.
       development:
         dependency-type: development
         update-types:

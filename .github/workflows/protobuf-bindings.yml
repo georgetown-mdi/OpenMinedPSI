@@ -1,0 +1,118 @@
+# Checks that the committed protobuf bindings match what build-proto.sh
+# generates from private_set_intersection/proto/psi.proto. The release bundle
+# (build-bundle.sh) uses the committed copies, so this is where a protoc or
+# plugin change shows up. On a mismatch the job fails and uploads the generated
+# files as the `psi-pb-generated` artifact, ready to review and commit.
+#
+# A pull request that touches none of the paths in the `changes` job's filter
+# skips the check; a push to master always runs it.
+
+name: Protobuf bindings
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Every path that can change the generated bindings or the comparison.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      bindings: ${{ steps.filter.outputs.bindings }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          persist-credentials: false
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        id: filter
+        with:
+          filters: |
+            bindings:
+              - 'private_set_intersection/proto/psi.proto'
+              - 'private_set_intersection/javascript/bin/psi_pb.js'
+              - 'private_set_intersection/javascript/src/implementation/proto/psi_pb.d.ts'
+              - 'private_set_intersection/javascript/scripts/build-proto.sh'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.bazelrc'
+              - '.bazelversion'
+              - 'MODULE.bazel'
+              - 'MODULE.bazel.lock'
+              - 'patches/**'
+              - '.github/workflows/protobuf-bindings.yml'
+
+  check:
+    name: committed bindings match generated
+    needs: changes
+    # Runs on every push, and on a pull request that changed a filtered path.
+    # If change detection did not succeed, the check runs rather than skips.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.bindings == 'true') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      PSI_PB_JS: private_set_intersection/javascript/bin/psi_pb.js
+      PSI_PB_DTS: private_set_intersection/javascript/src/implementation/proto/psi_pb.d.ts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        with:
+          bazelisk-cache: false
+          repository-cache: false
+          disk-cache: false
+
+      - name: Build protoc
+        run: bazel build -c opt --platforms="@local_config_platform//:host" @protobuf//:protoc
+
+      - name: Install JS toolchain (protoc plugins)
+        run: npm ci
+
+      - name: Generate bindings
+        run: bash private_set_intersection/javascript/scripts/build-proto.sh
+
+      - name: Compare with the committed bindings
+        id: compare
+        run: |
+          status=0
+          for f in "$PSI_PB_JS" "$PSI_PB_DTS"; do
+            if ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::$f is not committed"
+              status=1
+            fi
+          done
+          if ! git diff --exit-code -- "$PSI_PB_JS" "$PSI_PB_DTS"; then
+            echo "::error::the committed protobuf bindings differ from build-proto.sh output"
+            status=1
+          fi
+          exit "$status"
+
+      - name: Upload generated bindings
+        if: failure() && steps.compare.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: psi-pb-generated
+          path: |
+            ${{ env.PSI_PB_JS }}
+            ${{ env.PSI_PB_DTS }}
+          if-no-files-found: error

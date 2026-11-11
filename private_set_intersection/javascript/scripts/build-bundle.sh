@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 #
 # Builds the platform-independent half of the publishable @openmined/psi.js dist/
-# tree: the WASM bundles (node, web, worker), the protobuf bindings, and the
-# rolled-up JS plus type declarations and package metadata. It leaves
+# tree: the WASM bundles (node, web, worker) and the rolled-up JS plus type
+# declarations and package metadata. It leaves
 # private_set_intersection/javascript/dist/ ready to pack but does NOT fold in
 # the native prebuilds or run `npm pack` -- that is pack-native-package.sh's job.
 #
-# Splitting the two phases lets this arch-independent work (WASM/protoc/rollup,
+# The protobuf bindings (bin/psi_pb.js, src/implementation/proto/psi_pb.d.ts)
+# are the committed copies; build-proto.sh regenerates them, and the Protobuf
+# bindings workflow checks that the committed copies match its output.
+#
+# Splitting the two phases lets this arch-independent work (WASM/rollup,
 # ~7 min) run in a job that starts immediately and in parallel with the native
 # addon matrix, instead of serializing behind the slow Windows addon build.
 #
-# Run from the repo root. Requires `npm ci` to have run first (rollup + the
-# protoc-gen plugins live in node_modules).
+# Run from the repo root. Requires `npm ci` to have run first (rollup and its
+# plugins live in node_modules).
 
 set -euo pipefail
 
@@ -23,17 +27,10 @@ bazel build --config=wasm -c opt \
   "//$R/cpp:psi_wasm_web.js" \
   "//$R/cpp:psi_wasm_worker.js"
 
-echo "== refreshing bin/ (checked-in psi_pb.js kept) =="
+echo "== copying WASM bundles to bin/ (committed psi_pb.js used as is) =="
 cp -f "bazel-bin/$R/cpp/psi_wasm_node.js/wasm_node.js" "$R/bin/psi_wasm_node.js"
 cp -f "bazel-bin/$R/cpp/psi_wasm_web.js/wasm_web.js" "$R/bin/psi_wasm_web.js"
 cp -f "bazel-bin/$R/cpp/psi_wasm_worker.js/wasm_worker.js" "$R/bin/psi_wasm_worker.js"
-
-# Generate the protobuf bindings (psi_pb.js -> bin/, psi_pb.d.ts -> src/). They
-# are gitignored, so a clean checkout lacks them and rollup cannot resolve
-# ./proto/psi_pb. build-proto.sh needs the host protoc built first.
-echo "== generating protobuf bindings (psi_pb) =="
-bazel build -c opt --platforms="@local_config_platform//:host" @protobuf//:protoc
-bash "$R/scripts/build-proto.sh"
 
 echo "== rollup all bundles (incl. native) =="
 rm -rf "$R/dist"
