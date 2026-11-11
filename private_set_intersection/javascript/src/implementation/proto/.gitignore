@@ -2,3 +2,5 @@
 *
 # Except this file
 !.gitignore
+# and the committed protobuf bindings
+!psi_pb.d.ts

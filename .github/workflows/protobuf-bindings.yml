@@ -1,0 +1,79 @@
+# Checks that the committed protobuf bindings match what build-proto.sh
+# generates from private_set_intersection/proto/psi.proto. The release bundle
+# (build-bundle.sh) uses the committed copies, so this is where a protoc or
+# plugin change shows up. On a mismatch the job fails and uploads the generated
+# files as the `psi-pb-generated` artifact, ready to review and commit.
+
+name: Protobuf bindings
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: committed bindings match generated
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      PSI_PB_JS: private_set_intersection/javascript/bin/psi_pb.js
+      PSI_PB_DTS: private_set_intersection/javascript/src/implementation/proto/psi_pb.d.ts
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # No step pushes; keep the token out of the checkout's git config.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        with:
+          bazelisk-cache: false
+          repository-cache: false
+          disk-cache: false
+
+      - name: Build protoc
+        run: bazel build -c opt --platforms="@local_config_platform//:host" @protobuf//:protoc
+
+      - name: Install JS toolchain (protoc plugins)
+        run: npm ci
+
+      - name: Generate bindings
+        run: bash private_set_intersection/javascript/scripts/build-proto.sh
+
+      - name: Compare with the committed bindings
+        id: compare
+        run: |
+          status=0
+          for f in "$PSI_PB_JS" "$PSI_PB_DTS"; do
+            if ! git ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::$f is not committed"
+              status=1
+            fi
+          done
+          if ! git diff --exit-code -- "$PSI_PB_JS" "$PSI_PB_DTS"; then
+            echo "::error::the committed protobuf bindings differ from build-proto.sh output"
+            status=1
+          fi
+          exit "$status"
+
+      - name: Upload generated bindings
+        if: failure() && steps.compare.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: psi-pb-generated
+          path: |
+            ${{ env.PSI_PB_JS }}
+            ${{ env.PSI_PB_DTS }}
+          if-no-files-found: error

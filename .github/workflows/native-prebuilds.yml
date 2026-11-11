@@ -35,7 +35,7 @@
 #   validate-linux   matrix, load each Linux prebuild in its real libc/arch
 #                    (glibc -> node:*-bookworm-slim, musl -> node:*-alpine) on a
 #                    native runner -- no emulation
-#   build-bundle     the arch-independent WASM/protoc/rollup dist/ tree; NO
+#   build-bundle     the arch-independent WASM/rollup dist/ tree; NO
 #                    `needs` so it runs alongside build-addon
 #   package          downloads the prebuilds + bundle, folds them in, packs, and
 #                    records the tarball's sha256 as a job output
@@ -283,7 +283,7 @@ jobs:
 
   build-bundle:
     name: build WASM + rollup bundle
-    # No `needs`: the arch-independent WASM/protoc/rollup work has no dependency
+    # No `needs`: the arch-independent WASM/rollup work has no dependency
     # on the native addons, so it runs in parallel with build-addon instead of
     # after it. package waits on both.
     runs-on: ubuntu-24.04
@@ -301,15 +301,17 @@ jobs:
 
       - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
         with:
-          # No cache: a signed build reads nothing another job could write; every run builds cold (protoc and the WASM outputs included).
+          # No cache: a signed build reads nothing another job could write; every run builds cold (the WASM outputs included).
           bazelisk-cache: false
           repository-cache: false
           disk-cache: false
 
       - name: Install JS toolchain (rollup + plugins)
-        run: npm ci
+        # No package install scripts: the bundle build uses the committed
+        # protobuf bindings and needs no package that sets one up.
+        run: npm ci --ignore-scripts
 
-      - name: Build arch-independent bundle (WASM + protoc + rollup)
+      - name: Build arch-independent bundle (WASM + rollup)
         run: bash private_set_intersection/javascript/scripts/build-bundle.sh
 
       - uses: actions/upload-artifact@v7
