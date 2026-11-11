@@ -30,3 +30,19 @@ broken a build, not when a pin has fallen behind.
 | Host tools in `CI` | `CI.yml`: `actions/setup-python` `python-version` in the `Python` job, `actions/setup-go` `go-version` in the `Go` job, `go install golang.org/x/lint/golint@latest`, `pip install --upgrade pip packaging` | The versions `3.13` and `1.23`; golint, pip and packaging not pinned | manual | CI only; none enters the JavaScript tarball. The Python and Go builds use the Bazel-downloaded toolchains above. Move a version by hand when its upstream drops support. |
 | Dev container base | `Dockerfile` `FROM ubuntu:26.04` | A tag | manual | Not on any build path; the image is for local development. |
 | Actions | Every `uses:` in every workflow except `dtolnay/rust-toolchain` (its own row above) | A commit with the release tag in a trailing comment | automatic | The `github-actions` block, weekly, with a cooldown. Minor and patch bumps arrive grouped in one pull request; a major bump arrives alone. |
+
+## Upstream OpenMined/PSI
+
+This fork tracks `OpenMined/PSI`. Upstream is checked at each fork release,
+that is, each change of the `-alcove.N` version in `package.json`:
+
+```sh
+git remote add upstream https://github.com/OpenMined/PSI.git
+git fetch upstream --tags
+git log --oneline master..upstream/master
+```
+
+What upstream has that the fork lacks arrives in a pull request that merges
+`upstream/master`, or a release tag, into a branch cut from `master`. The merge
+keeps the fork's pins (the table above) and its package version, and the
+pull request names the upstream tag or commit it takes and what it changes.
