@@ -68,7 +68,7 @@
     "jest": "^30.0.2",
     "path": "^0.12.7",
     "prettier": "^3.6.0",
-    "protoc-gen-js": "^3.21.4-4",
+    "protoc-gen-js": "^4.0.3",
     "protoc-gen-ts": "^0.8.7",
     "rollup": "^4.44.0",
     "rollup-plugin-typescript2": "^0.37.0",
@@ -79,8 +79,5 @@
   "dependencies": {
     "google-protobuf": "^4.0.3",
     "node-gyp-build": "^4.8.4"
-  },
-  "overrides": {
-    "adm-zip": "0.6.1"
   }
 }
