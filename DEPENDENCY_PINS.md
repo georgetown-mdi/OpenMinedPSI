@@ -34,7 +34,8 @@ broken a build, not when a pin has fallen behind.
 ## Upstream OpenMined/PSI
 
 This fork tracks `OpenMined/PSI`. Upstream is checked at each fork release,
-that is, each change of the `-alcove.N` version in `package.json`:
+that is, each change of the `-alcove.N` version in `package.json`, and at
+each Alcove release, as a step of Alcove's release checklist:
 
 ```sh
 git remote add upstream https://github.com/OpenMined/PSI.git
