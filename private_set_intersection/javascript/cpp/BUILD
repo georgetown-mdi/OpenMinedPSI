@@ -17,6 +17,7 @@ DEFAULT_EMSCRIPTEN_LINKOPTS = [
     "-s WASM=1",  # Specify wasm ouptut
     "-s ERROR_ON_UNDEFINED_SYMBOLS=0",  # Ignore POSIX popen, __Unwind_GetIP
     "-s MODULARIZE=1",  # Allows us to manually invoke the initialization of wasm
+    "-s DYNAMIC_EXECUTION=0",  # No eval or new Function, so a CSP needs no 'unsafe-eval'
 ]
 
 NODE_LINKOPTS = [
