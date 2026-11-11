@@ -139,16 +139,62 @@ jobs:
         # PATH -- it needs swiftc, SDKROOT, and the SDK's Info.plist. This addon
         # is pure C++ and never invokes Swift (Linux degrades quietly; only the
         # Windows path is strict), so install a real toolchain purely to satisfy
-        # the probe. `cache: false` skips the action's installer cache: the
-        # installer runs elevated, so a signed build must not run one that
-        # another job could have written. The ~GB installer is downloaded on
-        # every run (about 2 minutes).
+        # the probe. The installer runs elevated, so it is checked against a
+        # pinned sha256 before it runs; swift.org publishes no checksum or
+        # signature for it, so the pin is the hash of the installer as it was
+        # served when pinned. To move it, change the two names and hash the new
+        # installer. Downloaded on every run, uncached (about 2 minutes).
         if: runner.os == 'Windows'
-        uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5 # v0.4.0
-        with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
-          cache: false
+        shell: pwsh
+        env:
+          SWIFT_VERSION: swift-6.3.3-release
+          SWIFT_BUILD: 6.3.3-RELEASE
+          SWIFT_INSTALLER_SHA256: 235626548f249cd516d3d4d90eee980dccad46f3822dac1f8e3119b0fede94b7
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'swift-installer.exe'
+          $url = "https://download.swift.org/$env:SWIFT_VERSION/windows10/swift-$env:SWIFT_BUILD/swift-$env:SWIFT_BUILD-windows10.exe"
+          & curl.exe --fail --silent --show-error --location --retry 3 --output $installer $url
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Swift installer download failed: $url"
+            exit 1
+          }
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $installer).Hash.ToLowerInvariant()
+          if ($actual -ne $env:SWIFT_INSTALLER_SHA256) {
+            Write-Host "::error::Swift installer $env:SWIFT_BUILD sha256 $actual does not match the pinned $env:SWIFT_INSTALLER_SHA256"
+            exit 1
+          }
+
+          $log = Join-Path $env:RUNNER_TEMP 'swift-install.log'
+          $process = Start-Process -FilePath $installer -ArgumentList '/quiet', '/log', $log -Wait -PassThru -Verb RunAs
+          if ($process.ExitCode -notin 0, 3010) {
+            Write-Host "::error::Swift installer exited with code $($process.ExitCode); see $log"
+            exit 1
+          }
+
+          # The installer sets Path, SDKROOT and the rest at machine and user
+          # level, which this runner's later steps do not read; carry every
+          # changed variable into them, its Path entries after the current ones.
+          $path = @($env:Path -split ';')
+          foreach ($level in 'Machine', 'User') {
+            $vars = [Environment]::GetEnvironmentVariables($level)
+            foreach ($name in $vars.Keys) {
+              $value = $vars[$name]
+              if ($name -eq 'Path') {
+                $path += $value -split ';'
+              } elseif ([Environment]::GetEnvironmentVariable($name) -ne $value) {
+                "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+                Set-Item -Path "Env:$name" -Value $value
+              }
+            }
+          }
+          $env:Path = ($path | Where-Object { $_ } | Select-Object -Unique) -join ';'
+          $env:Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          swift --version
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::swift --version exited with code $LASTEXITCODE"
+            exit 1
+          }
 
       - name: Build addon
         run: |
