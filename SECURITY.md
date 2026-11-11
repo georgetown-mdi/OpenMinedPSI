@@ -1,3 +1,16 @@
+# Security
+
+## Reporting a vulnerability
+
+Report a vulnerability privately, through GitHub's private vulnerability
+reporting: the repository's Security tab, "Report a vulnerability"
+(https://github.com/georgetown-mdi/OpenMinedPSI/security/advisories/new). Do
+not open a public issue or pull request for it.
+
+This fork builds the `@openmined/psi.js` package that georgetown-mdi/alcove
+vendors. If the vulnerability is also in upstream OpenMined/PSI, say so in the
+report.
+
 ## Caveats
 
 Several caveats should be carefully considered before using PSI.
